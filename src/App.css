@@ -2151,8 +2151,8 @@ input[type="checkbox"] {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  padding-bottom: 18px;
-  border-bottom: 1px solid #3f3f3f;
+  /* padding-bottom: 18px; */
+  /* border-bottom: 1px solid #3f3f3f; */
 }
 
 .tools-popup-content {
@@ -2208,4 +2208,15 @@ input[type="checkbox"] {
 .tl-year-label,
 .tl-hover-line {
   pointer-events: none;
+}
+
+.explorer-loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45); /* dark but see-through */
+  backdrop-filter: blur(2px);      /* optional */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
 }

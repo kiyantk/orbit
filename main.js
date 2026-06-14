@@ -28,6 +28,12 @@ if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
 let mainWindow;
 let splash;
 
+const normalizeCountries = (country) =>
+  (country || "")
+    .split(",")
+    .map((c) => c.trim().toUpperCase())
+    .filter(Boolean);
+
 // On startup:
 app.whenReady().then(() => {
   initPaths();
@@ -681,7 +687,14 @@ function buildWhereClause(rawFilters = {}, options = {}) {
   if (filters.filetype) add("extension = ?", filters.filetype);
   if (filters.mediaType) add("file_type = ?", filters.mediaType);
   if (filters.lens) add("lens_model = ?", filters.lens);
-  if (filters.country) add("country = ?", filters.country);
+  if (filters.country) {
+    add(
+      "',' || REPLACE(country, ' ', '') || ',' LIKE ?",
+      `%,${
+        filters.country
+      },%`
+    );
+  }
 
   if (filters.tagId) {
     clauses.push(`
@@ -703,7 +716,7 @@ function buildWhereClause(rawFilters = {}, options = {}) {
   }
 
   // global safety filter
-  if (!options.allowUndated !== true) {
+  if (options.allowUndated !== true) {
     clauses.push(`(
       create_date_local IS NOT NULL
       OR create_date IS NOT NULL
@@ -841,13 +854,15 @@ ipcMain.handle(
       ]
         .filter(Boolean)
         .join(" AND ");
+      
+      const finalWhere = whereSQL ? `WHERE ${whereSQL}` : "";
 
       const rows = db
         .prepare(
           `
       SELECT latitude, longitude, altitude, country, create_date, filename, device_model
       FROM files
-      ${whereSQL}
+      ${finalWhere}
     `,
         )
         .all(...params);
@@ -887,18 +902,22 @@ ipcMain.handle(
           },
         });
         heat.push([item.latitude, item.longitude, 1]);
-        if (item.altitude && item.altitude <= 1500 && item.country) {
-          countryCounts[item.country] = (countryCounts[item.country] || 0) + 1;
-          (countryBounds[item.country] ||= []).push(latlng);
-          if (lastPoint) {
-            const dist = haversineDistance(lastPoint, latlng);
-            if (dist > 200) {
-              if (currentSegment.length > 1) lineSegments.push(currentSegment);
-              currentSegment = [];
-            }
+        if (item.country) {
+          for (const c of normalizeCountries(item.country)) {
+            countryCounts[c] = (countryCounts[c] || 0) + 1;
+            (countryBounds[c] ||= []).push(latlng);
           }
-          currentSegment.push(latlng);
-          lastPoint = latlng;
+          if((item.altitude || item.altitude === 0) && item.altitude <= 1500) {
+            if (lastPoint) {
+              const dist = haversineDistance(lastPoint, latlng);
+              if (dist > 200) {
+                if (currentSegment.length > 1) lineSegments.push(currentSegment);
+                currentSegment = [];
+              }
+            }
+            currentSegment.push(latlng);
+            lastPoint = latlng;
+          }
         }
       }
 
@@ -1581,10 +1600,16 @@ ipcMain.handle("fetch-options", async (event, { birthDate = null }) => {
       )
       .all()
       .map((r) => r.file_type);
-    const countries = db
-      .prepare("SELECT DISTINCT country FROM files WHERE country IS NOT NULL")
+    const countriesRaw = db
+      .prepare("SELECT country FROM files WHERE country IS NOT NULL")
       .all()
-      .map((r) => r.country);
+      .map(r => r.country);
+    
+    const countries = [
+      ...new Set(
+        countriesRaw.flatMap(c => normalizeCountries(c))
+      )
+    ];
     const tags = db
       .prepare(
         `
@@ -2424,8 +2449,10 @@ ipcMain.handle("fetch-trips", async (_, options = {}) => {
     }
     current.end = row.date;
     current.ids.push(row.id);
-    current.countryCounts[row.country] =
-      (current.countryCounts[row.country] || 0) + 1;
+    for (const c of normalizeCountries(row.country)) {
+      current.countryCounts[c] =
+        (current.countryCounts[c] || 0) + 1;
+    }
   }
   if (current) trips.push(current);
 
@@ -2999,18 +3026,22 @@ ipcMain.handle("fetch-stats", async (event, { birthDate } = {}) => {
       )
       .all();
 
-    const byCountry = db
+    const rawCountries = db
       .prepare(
         `
-      SELECT
-        COALESCE(NULLIF(TRIM(country), ''), 'Unknown') AS country,
-        COUNT(*) AS count
-      FROM files
-      GROUP BY COALESCE(NULLIF(TRIM(country), ''), 'Unknown')
-      ORDER BY count DESC
+      SELECT country FROM files
+      WHERE country IS NOT NULL
     `,
       )
       .all();
+
+    const byCountryMap = {};
+
+    for (const row of rawCountries) {
+      for (const c of normalizeCountries(row.country)) {
+        byCountryMap[c] = (byCountryMap[c] || 0) + 1;
+      }
+    }
 
     const totals = db
       .prepare(
@@ -3099,7 +3130,9 @@ ipcMain.handle("fetch-stats", async (event, { birthDate } = {}) => {
       allDays,
       byType,
       byDevice,
-      byCountry,
+      byCountry: Object.entries(byCountryMap)
+        .map(([country, count]) => ({ country, count }))
+        .sort((a, b) => b.count - a.count),
       totalFiles: totals.totalFiles,
       totalStorage: totals.totalStorage || 0,
       sources: mappedSources,

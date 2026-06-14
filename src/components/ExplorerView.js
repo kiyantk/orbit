@@ -210,6 +210,7 @@ const ExplorerView = ({
   setExplorerMode,
   explorerScale,
   onFindSimilar,
+  explorerLoading,
 }) => {
   const [totalCount, setTotalCount] = useState(null);
   const [containerWidth, setContainerWidth] = useState(1200);
@@ -230,6 +231,8 @@ const ExplorerView = ({
   const visualScaleRef = useRef(scale);
   const scaleDebounceTimer = useRef(null);
   const gridOuterRef = useRef(null);
+  const mosaicScrollTopRef = useRef(0);
+  const fetchGeneration = useRef(0);
 
   // ─── Drag-select state ────────────────────────────────────────────────────
   const [dragContentRect, setDragContentRect] = useState(null); // { left, top, width, height } in content coords (drives visual)
@@ -301,43 +304,46 @@ const ExplorerView = ({
   }, []);
 
   // ─── Data fetching ────────────────────────────────────────────────────────
-  const fetchPageForIndex = useCallback(
-    async (index, isFirst = false) => {
-      const pageIndex = Math.floor(index / PAGE_SIZE);
-      if (loadingPages.current.has(pageIndex)) return;
-      loadingPages.current.add(pageIndex);
+const fetchPageForIndex = useCallback(
+  async (index, isFirst = false, generation) => {
+    const pageIndex = Math.floor(index / PAGE_SIZE);
+    if (loadingPages.current.has(pageIndex)) return;
+    loadingPages.current.add(pageIndex);
 
-      const offset = isFirst ? 0 : pageIndex * PAGE_SIZE;
-      try {
-        const res = await window.electron.ipcRenderer.invoke("fetch-files", {
-          offset,
-          limit: PAGE_SIZE,
-          filters: filters || {},
-          settings: currentSettings || {},
-        });
-        if (res?.success) addItems(res.rows, offset);
-      } catch (err) {
-        console.error("fetchPage error", err);
-      } finally {
-        loadingPages.current.delete(pageIndex);
-      }
-    },
-    [filters, currentSettings, addItems],
-  );
-
-  const fetchTotalCount = useCallback(async () => {
+    const offset = isFirst ? 0 : pageIndex * PAGE_SIZE;
     try {
-      const count = await window.electron.ipcRenderer.invoke(
-        "get-filtered-files-count",
-        { filters },
-      );
-      const n = Number(count) || 0;
-      setTotalCount(n);
-      filteredCountUpdated(n || null);
+      const res = await window.electron.ipcRenderer.invoke("fetch-files", {
+        offset,
+        limit: PAGE_SIZE,
+        filters: filters || {},
+        settings: currentSettings || {},
+      });
+      // Discard if a newer filter set has since been applied
+      if (generation !== fetchGeneration.current) return;
+      if (res?.success) addItems(res.rows, offset);
     } catch (err) {
-      console.error("fetchTotalCount error", err);
+      console.error("fetchPage error", err);
+    } finally {
+      loadingPages.current.delete(pageIndex);
     }
-  }, [filters, filteredCountUpdated]);
+  },
+  [filters, currentSettings, addItems],
+);
+
+const fetchTotalCount = useCallback(async (generation) => {
+  try {
+    const count = await window.electron.ipcRenderer.invoke(
+      "get-filtered-files-count",
+      { filters },
+    );
+    if (generation !== fetchGeneration.current) return;
+    const n = Number(count) || 0;
+    setTotalCount(n);
+    filteredCountUpdated(n || null);
+  } catch (err) {
+    console.error("fetchTotalCount error", err);
+  }
+}, [filters, filteredCountUpdated]);
 
   const fetchAllIds = useCallback(async () => {
     const res = await window.electron.ipcRenderer.invoke("fetch-files", {
@@ -354,22 +360,23 @@ const ExplorerView = ({
   const isItemLoaded = (index) => !!itemsRef.current[index];
 
   const loadMoreItems = useCallback(
-    (startIndex, stopIndex) => {
-      if (loadMoreTimeout.current) clearTimeout(loadMoreTimeout.current);
-      return new Promise((resolve) => {
-        loadMoreTimeout.current = setTimeout(() => {
-          const startPage = Math.floor(startIndex / PAGE_SIZE);
-          const endPage = Math.floor(stopIndex / PAGE_SIZE);
-          const promises = [];
-          for (let p = startPage; p <= endPage; p++) {
-            promises.push(fetchPageForIndex(p * PAGE_SIZE));
-          }
-          Promise.all(promises).then(resolve);
-        }, 50);
-      });
-    },
-    [fetchPageForIndex],
-  );
+  (startIndex, stopIndex) => {
+    if (loadMoreTimeout.current) clearTimeout(loadMoreTimeout.current);
+    const generation = fetchGeneration.current; // capture at scheduling time
+    return new Promise((resolve) => {
+      loadMoreTimeout.current = setTimeout(() => {
+        const startPage = Math.floor(startIndex / PAGE_SIZE);
+        const endPage = Math.floor(stopIndex / PAGE_SIZE);
+        const promises = [];
+        for (let p = startPage; p <= endPage; p++) {
+          promises.push(fetchPageForIndex(p * PAGE_SIZE, false, generation));
+        }
+        Promise.all(promises).then(resolve);
+      }, 50);
+    });
+  },
+  [fetchPageForIndex],
+);
 
   // ─── Tags ─────────────────────────────────────────────────────────────────
   const getTags = useCallback(async () => {
@@ -824,17 +831,19 @@ const ExplorerView = ({
   }, [onScale, scale]);
 
   // Filter change: reset + fetch
-  useEffect(() => {
-    itemsRef.current = {};
-    idToIndex.current = new Map();
-    loadingPages.current.clear();
-    setTotalCount(null);
-    fetchTotalCount();
-    // Defer the first page fetch so the component can paint the loading
-    // state before the heavy data arrives, avoiding a visible freeze.
-    const t = setTimeout(() => fetchPageForIndex(0, true), 0);
-    return () => clearTimeout(t);
-  }, [filters, fetchPageForIndex, fetchTotalCount]);
+useEffect(() => {
+  // Invalidate all in-flight requests from the previous filter
+  const generation = ++fetchGeneration.current;
+
+  itemsRef.current = {};
+  idToIndex.current = new Map();
+  loadingPages.current.clear();
+  setTotalCount(null);
+
+  fetchTotalCount(generation);
+  const t = setTimeout(() => fetchPageForIndex(0, true, generation), 0);
+  return () => clearTimeout(t);
+}, [filters, fetchPageForIndex, fetchTotalCount]);
 
   // Reset scroll on filter change
   useEffect(() => {
@@ -903,12 +912,16 @@ const ExplorerView = ({
 
       const { itemIndex, offsetWithinRow } = scrollAnchorRef.current;
 
-      // Recompute where this item lives with the NEW columnCount + rowHeight.
-      // offsetWithinRow is scaled proportionally since rowHeight changed.
-      const newRow = Math.floor(itemIndex / columnCount);
-      const rowHeightRatio = rowHeight / rowHeight; // always 1 — offsetWithinRow scales with rowHeight
-      const targetScrollTop =
-        newRow * rowHeight + (offsetWithinRow * rowHeight) / rowHeight;
+      let targetScrollTop;
+
+      if (scale >= 0.4 && mosaicScrollTopRef.current > 0) {
+        targetScrollTop = mosaicScrollTopRef.current;
+        mosaicScrollTopRef.current = 0; // consume it
+      } else {
+        const { itemIndex, offsetWithinRow } = scrollAnchorRef.current;
+        const newRow = Math.floor(itemIndex / columnCount);
+        targetScrollTop = newRow * rowHeight + offsetWithinRow;
+      }
 
       gridRef.current?.scrollToPosition({ scrollTop: targetScrollTop });
 
@@ -917,6 +930,26 @@ const ExplorerView = ({
       });
     });
   }, [scale, rowHeight, columnCount, totalCount]);
+
+  const handleMosaicScroll = useCallback(
+    (mosaicScrollTop) => {
+      mosaicScrollTopRef.current = mosaicScrollTop;
+
+      // Compute mosaic layout to reverse-map to item index
+      const tileSize = Math.max(14, 42 * (scale / 0.4));
+      const mosaicCols = Math.max(
+        1,
+        Math.floor(Math.min(containerWidth, 400) / tileSize),
+      );
+      const topRow = Math.floor(mosaicScrollTop / tileSize);
+
+      scrollAnchorRef.current = {
+        itemIndex: topRow * mosaicCols,
+        offsetWithinRow: mosaicScrollTop - topRow * tileSize,
+      };
+    },
+    [scale, containerWidth],
+  );
 
   useEffect(() => {
     const requestId = ++overviewRequestId.current;
@@ -932,7 +965,7 @@ const ExplorerView = ({
       overviewIndexRef.current = res?.rows || [];
       forceUpdate((x) => x + 1); // IMPORTANT: ref change won't re-render
     })();
-  }, [scale, totalCount, filters, currentSettings]);
+  }, [totalCount, filters, currentSettings]);
 
   // IPC: item removed
   useEffect(() => {
@@ -1234,12 +1267,15 @@ const ExplorerView = ({
               {scale < 0.4 ? (
                 <OverviewMosaic
                   scale={scale}
-                  items={overviewIndexRef.current}
+                  fetchItems={(startIndex, endIndex) =>
+                    overviewIndexRef.current.slice(startIndex, endIndex)
+                  }
                   totalCount={totalCount}
                   containerWidth={containerWidth}
                   containerHeight={gridHeight}
                   scrollTop={currentScrollTop}
                   onSelectItem={(item) => handleSelect(item, "single")}
+                  onMosaicScroll={handleMosaicScroll}
                 />
               ) : (
                 <Grid
@@ -1388,6 +1424,12 @@ const ExplorerView = ({
           onRemoveItem={handleRemoveItem}
           onFindSimilar={onFindSimilar}
         />
+      )}
+
+      {explorerLoading && (
+        <div className="explorer-loading-overlay">
+          <div className="loader"></div>
+        </div>
       )}
 
       <SnackbarProvider />

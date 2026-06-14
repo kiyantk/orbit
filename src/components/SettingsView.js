@@ -419,7 +419,7 @@ const runTool = useCallback(
   runTool("fix-thumbnails", "Fixing thumbnails", async () => {
     await runTool(
       "generate-derived-thumbnails",
-      "Generating 32px thumbnails"
+      "Generating 64px thumbnails"
     );
   });
   const fixIDs = () => runTool("fix-media-ids", "Fixing media IDs");

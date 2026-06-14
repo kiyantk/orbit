@@ -47,6 +47,7 @@ const App = () => {
     type: "",
     existing: null,
   });
+  const [explorerLoading, setExplorerLoading] = useState(false);
 
   const handleActionPanelApply = (data) => {
     if (
@@ -277,6 +278,7 @@ const App = () => {
   };
 
   const handleFindSimilar = async (item) => {
+    setExplorerLoading(true);
     const result = await window.electron.ipcRenderer.invoke(
       "embedding:search-by-id",
       {
@@ -286,6 +288,7 @@ const App = () => {
     );
 
     if (result.success && result.results.length > 0) {
+      setExplorerLoading(false);
       handleActionPanelApply({
         ids: result.results,
         _smartSearch: true,
@@ -426,6 +429,7 @@ const App = () => {
                 setExplorerMode={setExplorerMode}
                 explorerScale={explorerScale}
                 onFindSimilar={handleFindSimilar}
+                explorerLoading={explorerLoading}
               />
               <div className="border-l overflow-y-auto bg-gray-50">
                 {selectedItem ? (

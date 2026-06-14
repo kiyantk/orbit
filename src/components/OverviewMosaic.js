@@ -1,255 +1,230 @@
-import React, { useEffect, useRef, useCallback, useMemo } from "react";
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+  useDeferredValue
+} from "react";
 
 const GAP = 0;
 const MAX_WIDTH = 400;
 const BASE_TILE = 42;
-const DPR = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
 
-// ─── Image cache (module-level singleton, survives remounts) ──────────────────
-const imageCache = new Map();
+// How many extra rows to render above/below the viewport (render buffer)
+const OVERSCAN_ROWS = 3;
 
-function loadImage(src, onLoad) {
-  if (imageCache.has(src)) {
-    const img = imageCache.get(src);
-    if (img.complete && img.naturalWidth) return img;
-    img.addEventListener("load", onLoad, { once: true });
-    return img;
-  }
-  const img = new Image();
-  img.addEventListener("load", onLoad, { once: true });
-  img.src = src;
-  imageCache.set(src, img);
-  return img;
-}
-
-// ─── Cover-crop draw helper ───────────────────────────────────────────────────
-function drawCoverImage(ctx, img, x, y, w, h) {
-  const iw = img.naturalWidth;
-  const ih = img.naturalHeight;
-  const ir = iw / ih;
-  const tr = w / h;
-  let sx, sy, sw, sh;
-  if (ir > tr) {
-    sh = ih; sw = ih * tr; sx = (iw - sw) / 2; sy = 0;
-  } else {
-    sw = iw; sh = iw / tr; sx = 0; sy = (ih - sh) / 2;
-  }
-  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
-}
-
-// ─── Layout computation (pure, memoizable) ───────────────────────────────────
+// ─── Layout computation ───────────────────────────────────────────────────────
 function computeLayout(scale, containerWidth, totalCount) {
   const width = Math.min(containerWidth, MAX_WIDTH);
   const tileSize = Math.max(14, BASE_TILE * (scale / 0.4));
-  const cols = Math.max(1, Math.floor(width / (tileSize + GAP)));
+  const step = tileSize + GAP;
+  const cols = Math.max(1, Math.floor(width / step));
   const totalRows = Math.ceil(totalCount / cols);
-  const totalHeight = totalRows * (tileSize + GAP);
-  return { width, tileSize, cols, totalRows, totalHeight };
+  const totalHeight = totalRows * step;
+  return { width, tileSize, step, cols, totalRows, totalHeight };
+}
+
+// ─── Single tile ─────────────────────────────────────────────────────────────
+// Memoized so only tiles whose src changes re-render.
+const Tile = React.memo(({ item, size, onClick }) => {
+  const src = item?.thumbnail_path
+    ? `orbit://thumbs/${item.id}_thumb_64.jpg`
+    : null;
+
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        width: size,
+        height: size,
+        flexShrink: 0,
+        cursor: "pointer",
+        overflow: "hidden",
+        backgroundColor: src ? undefined : item ? "#333" : "#1a1a1a",
+        userSelect: "none",
+      }}
+    >
+      {src && (
+        <img
+          key={item.id}
+          src={src}
+          width={size}
+          height={size}
+          draggable={false}
+          style={{ display: "block", width: "100%", height: "100%", objectFit: "cover" }}
+          // Don't decode on the main thread; browser handles async
+          decoding="async"
+          loading="lazy"
+        />
+      )}
+    </div>
+  );
+});
+
+// ─── Row of tiles ────────────────────────────────────────────────────────────
+const TileRow = React.memo(({ rowIndex, cols, items, itemOffset, totalCount, tileSize, step, onClickItem }) => {
+  const startIndex = rowIndex * cols;
+  const tiles = [];
+
+  for (let col = 0; col < cols; col++) {
+    const index = startIndex + col;
+    if (index >= totalCount) break;
+    const item = items[index - itemOffset];
+
+    tiles.push(
+      <Tile
+        key={index}
+        item={item}
+        size={tileSize}
+        onClick={item?.id ? () => onClickItem(item) : undefined}
+      />
+    );
+  }
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: rowIndex * step,
+        left: 0,
+        display: "flex",
+        gap: GAP,
+      }}
+    >
+      {tiles}
+    </div>
+  );
+});
+
+function useDebounced(value, delay = 120) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 const OverviewMosaic = ({
   scale,
-  items,
+  fetchItems,
   containerWidth,
   containerHeight,
   scrollTop: controlledScrollTop,
   onSelectItem,
   totalCount,
+  onMosaicScroll
 }) => {
-  const canvasRef = useRef(null);
-  const scrollTopRef = useRef(controlledScrollTop ?? 0);
-  const itemsRef = useRef(items);
-  const needsRenderRef = useRef(true);
-  const rafRef = useRef(null);
-  const lastSizeRef = useRef({ w: 0, h: 0 });
+  const scrollRef = useRef(null);
+  const [scrollTop, setScrollTop] = useState(controlledScrollTop ?? 0);
+  const ticking = useRef(false);
 
-  // Keep itemsRef in sync without triggering re-renders
-  itemsRef.current = items;
+  const debouncedScale = useDebounced(scale, 120);
+const deferredWidth = useDeferredValue(containerWidth);
 
-  // Memoize layout so we only recalculate when inputs change
-  const layout = useMemo(
-    () => computeLayout(scale, containerWidth, totalCount),
-    [scale, containerWidth, totalCount]
-  );
-  const layoutRef = useRef(layout);
-  layoutRef.current = layout;
+const layout = useMemo(
+  () => computeLayout(debouncedScale, deferredWidth, totalCount),
+  [debouncedScale, deferredWidth, totalCount]
+);
 
-  // Keep scrollTop in sync when controlled externally
+  // Sync externally controlled scrollTop
   useEffect(() => {
-    if (controlledScrollTop != null) {
-      scrollTopRef.current = controlledScrollTop;
-      needsRenderRef.current = true;
+    if (controlledScrollTop != null && scrollRef.current) {
+      scrollRef.current.scrollTop = controlledScrollTop;
     }
   }, [controlledScrollTop]);
 
-  // Mark dirty whenever layout or container changes
+  // Passive scroll handler — use RAF to throttle state updates to one per frame
   useEffect(() => {
-    needsRenderRef.current = true;
-  }, [layout, containerHeight]);
+    const el = scrollRef.current;
+    if (!el) return;
 
-  // ── Canvas resize (only when dimensions actually change) ──────────────────
-  const syncCanvasSize = useCallback((canvas, w, h) => {
-    const last = lastSizeRef.current;
-    if (last.w === w && last.h === h) return;
-    canvas.width = w * DPR;
-    canvas.height = h * DPR;
-    canvas.style.width = `${w}px`;
-    canvas.style.height = `${h}px`;
-    lastSizeRef.current = { w, h };
-    needsRenderRef.current = true;
+    const onScroll = () => {
+      if (!ticking.current) {
+        ticking.current = true;
+        requestAnimationFrame(() => {
+          setScrollTop(el.scrollTop);
+          onMosaicScroll?.(el.scrollTop);
+          ticking.current = false;
+        });
+      }
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
-  // ── Core draw ─────────────────────────────────────────────────────────────
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const { width, tileSize, cols, totalRows, totalHeight } = layoutRef.current;
-    const scrollTop = scrollTopRef.current;
-    const step = tileSize + GAP;
-    const list = itemsRef.current || [];
-
-    syncCanvasSize(canvas, width, containerHeight);
-
-    const ctx = canvas.getContext("2d");
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    ctx.clearRect(0, 0, width, containerHeight);
-
-    // Visible row range (view culling)
-    const startRow = Math.max(0, Math.floor(scrollTop / step));
-    const endRow = Math.min(totalRows, Math.ceil((scrollTop + containerHeight) / step));
-
-    for (let row = startRow; row < endRow; row++) {
-      for (let col = 0; col < cols; col++) {
-        const index = row * cols + col;
-        if (index >= totalCount) break;
-
-        const x = col * step;
-        const drawY = row * step - scrollTop;
-        const item = list[index];
-
-        if (!item) {
-          ctx.fillStyle = "#1a1a1a";
-          ctx.fillRect(x, drawY, tileSize, tileSize);
-          continue;
-        }
-
-        const src = item.thumbnail_path
-          ? `orbit://thumbs/${item.id}_thumb_64.jpg`
-          : null;
-
-        if (src) {
-          const img = loadImage(src, () => { needsRenderRef.current = true; });
-          if (img.complete && img.naturalWidth) {
-            drawCoverImage(ctx, img, x, drawY, tileSize, tileSize);
-          } else {
-            ctx.fillStyle = "#222";
-            ctx.fillRect(x, drawY, tileSize, tileSize);
-          }
-        } else {
-          ctx.fillStyle = "#333";
-          ctx.fillRect(x, drawY, tileSize, tileSize);
-        }
+  // Click handler with IPC fetch
+  const handleClickItem = useCallback(async (item) => {
+    if (!item?.id) return;
+    try {
+      const res = await window.electron.ipcRenderer.invoke("get-item-by-id", item.id);
+      if (res?.success && res.item) {
+        onSelectItem?.(res.item);
+      } else {
+        console.warn("Failed to resolve item", res?.error);
       }
+    } catch (err) {
+      console.error("IPC fetch failed:", err);
     }
-  }, [containerHeight, syncCanvasSize, totalCount]);
+  }, [onSelectItem]);
 
-  // ── Render loop: only paints when dirty ──────────────────────────────────
-  useEffect(() => {
-    let alive = true;
+  const { width, tileSize, step, cols, totalRows, totalHeight } = layout;
 
-    const loop = () => {
-      if (!alive) return;
-      if (needsRenderRef.current) {
-        needsRenderRef.current = false;
-        draw();
-      }
-      rafRef.current = requestAnimationFrame(loop);
-    };
+  // Which rows are visible (+ overscan buffer)
+  const firstVisibleRow = Math.max(0, Math.floor(scrollTop / step) - OVERSCAN_ROWS);
+  const lastVisibleRow = Math.min(
+    totalRows - 1,
+    Math.ceil((scrollTop + containerHeight) / step) + OVERSCAN_ROWS
+  );
 
-    rafRef.current = requestAnimationFrame(loop);
-    return () => {
-      alive = false;
-      cancelAnimationFrame(rafRef.current);
-    };
-  }, [draw]);
+    const startIndex = firstVisibleRow * cols;
+  const endIndex = (lastVisibleRow + 1) * cols;
+  const visibleItems = fetchItems(startIndex, endIndex);
 
-  // ── Click → item index ────────────────────────────────────────────────────
-  const handleClick = useCallback(async (e) => {
-  const canvas = canvasRef.current;
-  if (!canvas) return;
-
-  const { tileSize, cols } = layoutRef.current;
-  const step = tileSize + GAP;
-  const rect = canvas.getBoundingClientRect();
-
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top + scrollTopRef.current;
-
-  const col = Math.floor(x / step);
-  const row = Math.floor(y / step);
-
-  if (GAP > 0) {
-    const localX = x - col * step;
-    const localY = y - row * step;
-    if (localX > tileSize || localY > tileSize) return;
-  }
-
-  const index = row * cols + col;
-  const item = (itemsRef.current || [])[index];
-
-  if (!item?.id) return;
-
-  try {
-    const res = await window.electron.ipcRenderer.invoke(
-      "get-item-by-id",
-      item.id
+  const visibleRows = [];
+  for (let row = firstVisibleRow; row <= lastVisibleRow; row++) {
+    const rowStart = row * cols - startIndex; // offset into visibleItems slice
+    visibleRows.push(
+      <TileRow
+        key={row}
+        rowIndex={row}
+        cols={cols}
+        items={visibleItems}
+        itemOffset={startIndex}   // ← add this so TileRow indexes correctly
+        totalCount={totalCount}
+        tileSize={tileSize}
+        step={step}
+        onClickItem={handleClickItem}
+      />
     );
-
-    if (res?.success && res.item) {
-      onSelectItem?.(res.item);
-    } else {
-      console.warn("Failed to resolve item", res?.error);
-    }
-  } catch (err) {
-    console.error("IPC fetch failed:", err);
   }
-}, [onSelectItem]);
-
-  // ── Scroll handler ────────────────────────────────────────────────────────
-  const handleScroll = useCallback((e) => {
-    scrollTopRef.current = e.currentTarget.scrollTop;
-    needsRenderRef.current = true;
-  }, []);
-
-  const { totalHeight, width } = layout;
 
   return (
     <div
+      ref={scrollRef}
       style={{
         width: "100%",
         height: "100%",
         overflowY: "auto",
+        // Promote to its own compositor layer — scroll happens off main thread
+        willChange: "scroll-position",
         position: "relative",
       }}
-      onScroll={handleScroll}
     >
       <div style={{ display: "flex", justifyContent: "center" }}>
-        <div style={{ width: "100%", maxWidth: MAX_WIDTH, position: "relative" }}>
-          {/* Spacer div establishes scrollable height */}
-          <div style={{ height: totalHeight, position: "relative" }}>
-            <canvas
-              ref={canvasRef}
-              onClick={handleClick}
-              style={{
-                display: "block",
-                cursor: "pointer",
-                position: "sticky",
-                top: 0,
-              }}
-            />
-          </div>
+        <div
+          style={{
+            width: "100%",
+            maxWidth: MAX_WIDTH,
+            // Full scroll height so the scrollbar is correct
+            height: totalHeight,
+            position: "relative",
+          }}
+        >
+          {visibleRows}
         </div>
       </div>
     </div>
