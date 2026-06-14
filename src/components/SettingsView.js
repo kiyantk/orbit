@@ -509,7 +509,7 @@ const runTool = useCallback(
                   <option value="random">Random</option>
                 </select>
               </SettingsRow>
-              <SettingsRow>
+              {/* <SettingsRow>
                 <span>Explorer layout:</span>
                 <select
                   value={settings.explorerLayout}
@@ -522,7 +522,7 @@ const runTool = useCallback(
                   <option value="grid">Grid (default)</option>
                   <option value="justified">Justified (collage)</option>
                 </select>
-              </SettingsRow>
+              </SettingsRow> */}
               <SettingsRow>
                 <span style={settings.explorerLayout !== "grid" ? { opacity: 0.4 } : {}}>Item text:</span>
                 <select

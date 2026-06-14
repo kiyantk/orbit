@@ -65,11 +65,15 @@ app.whenReady().then(() => {
     backgroundColor: "#15131a",
   });
 
-  mainWindow.webContents.on("did-finish-load", () => {
-    if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.once("did-finish-load", () => {
+    if (splash && !splash.isDestroyed()) {
+      splash.close();
+    }
   
-    splash.close();
-    mainWindow.show();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+    }
+  
     setTimeout(startEmbeddingService, 3000);
   });
 
