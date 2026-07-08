@@ -19,9 +19,12 @@ const fsPromises = fs.promises;
 const heicDecode = require("heic-decode");
 const { Worker } = require("worker_threads");
 const EmbeddingService = require("./embedding-service");
+const LocationService  = require("./location-service");
 const crypto = require("crypto");
+const { parse } = require("csv-parse/sync");
 let embeddingService = null;
 let _textPipeline = null;
+let locationService  = null;
 
 if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -33,6 +36,23 @@ const normalizeCountries = (country) =>
     .split(",")
     .map((c) => c.trim().toUpperCase())
     .filter(Boolean);
+
+const countriesCsvPath = path.join(__dirname, 'public/countries.csv');
+const countriesCsv = fs.readFileSync(countriesCsvPath, "utf-8");
+
+const countryPopulationMap = {};
+
+for (const row of parse(countriesCsv, {
+  columns: true,
+  skip_empty_lines: true,
+  delimiter: ";",
+})) {
+  const code = (row.iso2 || row.id || "").toUpperCase();
+
+  if (!code) continue;
+
+  countryPopulationMap[code] = Number(row.population) || 0;
+}
 
 // On startup:
 app.whenReady().then(() => {
@@ -75,6 +95,7 @@ app.whenReady().then(() => {
     }
   
     setTimeout(startEmbeddingService, 3000);
+    setTimeout(startLocationService,  5000);
   });
 
   // mainWindow.once("ready-to-show", () => {
@@ -359,6 +380,11 @@ const defaultConfig = {
   noGutters: false,
   preloadHeic: false,
   memoriesLayout: "list",
+  placesSortBy: "count",
+  placesThumbnails: "random",
+  placesSubtitles: "count",
+  placesMinCount: 1,
+  placesExcludeFlights: false,
   driveLetterMap: {},
 };
 
@@ -473,6 +499,27 @@ function startEmbeddingService() {
   embeddingService = new EmbeddingService(db, dataDir, () => mainWindow);
   embeddingService.start();
 }
+
+function startLocationService() {
+  if (locationService) return;
+  initDatabase();
+
+  // geo.db lives at the project root in dev, or next to app.asar in production.
+  const geoDbPath = app.isPackaged
+    ? path.join(process.resourcesPath, "geo.db")
+    : path.join(__dirname, "geo.db");
+
+  locationService = new LocationService(db, dataDir, geoDbPath, () => mainWindow);
+  locationService.start();
+}
+
+ipcMain.handle("read-file", async (_event, relativePath) => {
+  // Resolve relative to the app's resources / public directory.
+  // Adjust __dirname / app.getAppPath() to match your project layout.
+  const fullPath = path.join(__dirname, relativePath);
+  return fs.readFileSync(fullPath, "utf-8");
+});
+
 
 ipcMain.handle("fix-media-ids", async () => {
   try {
@@ -716,6 +763,21 @@ function buildWhereClause(rawFilters = {}, options = {}) {
       add("media_id = ?", filters.searchTerm);
     } else if (filters.searchBy === "name") {
       add("filename LIKE ?", `%${filters.searchTerm}%`);
+    } else if (filters.searchBy === "location") {
+      const term = `%${filters.searchTerm}%`;
+    
+      clauses.push(`
+        id IN (
+          SELECT file_id
+          FROM locations
+          WHERE country     LIKE ?
+             OR subdivision LIKE ?
+             OR city        LIKE ?
+             OR city_simple  LIKE ?
+        )
+      `);
+    
+      params.push(term, term, term, term);
     }
   }
 
@@ -2157,9 +2219,10 @@ ipcMain.handle("get-storage-usage", async () => {
     // Per-table row counts + byte estimates via dbstat
     const tableNames = [
       "files",
-      "embeddings",
       "memories",
       "tags",
+      "locations",
+      "embeddings",
       "removed_files",
     ];
     const tables = {};
@@ -3640,6 +3703,433 @@ ipcMain.handle("embedding:has-embedding", async (event, fileId) => {
   }
 });
 
+// ─── Location service IPC ──────────────────────────────────────────────────
+
+/** Current progress snapshot */
+ipcMain.handle("location:get-status", () => {
+  if (!locationService) return { total: 0, done: 0, percentage: 0 };
+  return locationService.getStatus();
+});
+
+ipcMain.handle("location:pause",  () => { locationService?.pause();  return { ok: true }; });
+ipcMain.handle("location:resume", () => { locationService?.resume(); return { ok: true }; });
+
+/**
+ * Fetch resolved location rows for a set of file IDs.
+ * Accepts an optional array of file IDs; if omitted returns all rows.
+ * Returns: [{ file_id, country, subdivision, city }]
+ */
+ipcMain.handle("location:get-for-files", async (event, fileIds) => {
+  try {
+    initDatabase();
+
+    if (Array.isArray(fileIds) && fileIds.length > 0) {
+      // Chunk to stay under SQLite's 999-variable limit.
+      const chunkSize = 999;
+      const rows = [];
+      for (let i = 0; i < fileIds.length; i += chunkSize) {
+        const chunk = fileIds.slice(i, i + chunkSize);
+        const placeholders = chunk.map(() => "?").join(",");
+        rows.push(
+          ...db
+            .prepare(`SELECT file_id, country, subdivision, city FROM locations WHERE file_id IN (${placeholders})`)
+            .all(...chunk)
+        );
+      }
+      return { success: true, rows };
+    }
+
+    // No filter — return everything (used by stats / map views).
+    const rows = db.prepare("SELECT file_id, country, subdivision, city FROM locations").all();
+    return { success: true, rows };
+  } catch (err) {
+    console.error("location:get-for-files error:", err);
+    return { success: false, error: err.message, rows: [] };
+  }
+});
+
+// ─── Shared thumbnail helper ─────────────────────────────────────────────────
+//
+// Given an array of file IDs, returns up to `limit` thumbnail rows ordered by
+// the same "quality score" used in the memories fetch (camera metadata,
+// aspect-ratio proximity to 1.3, megapixels, then random tie-break).
+//
+function pickThumbnails(db, ids, limit = 1) {
+  if (!ids || ids.length === 0) return [];
+
+  const chunkSize = 999;
+  const thumbnails = [];
+
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    if (thumbnails.length >= limit) break;
+    const chunk = ids.slice(i, i + chunkSize);
+    const remaining = limit - thumbnails.length;
+
+    const rows = db
+      .prepare(
+        `
+        SELECT id, thumbnail_path
+        FROM   files
+        WHERE  id IN (${chunk.map(() => "?").join(",")})
+          AND  file_type       = 'image'
+          AND  thumbnail_path IS NOT NULL
+        ORDER BY
+          (
+            CASE WHEN camera_make   IS NOT NULL THEN 4 ELSE 0 END +
+            CASE WHEN camera_model  IS NOT NULL THEN 3 ELSE 0 END +
+            CASE WHEN lens_model    IS NOT NULL THEN 2 ELSE 0 END +
+            CASE WHEN focal_length  IS NOT NULL THEN 2 ELSE 0 END +
+            CASE WHEN iso           IS NOT NULL THEN 1 ELSE 0 END +
+            CASE WHEN aperture      IS NOT NULL THEN 1 ELSE 0 END +
+            CASE WHEN latitude      IS NOT NULL THEN 2 ELSE 0 END +
+            CASE WHEN longitude     IS NOT NULL THEN 2 ELSE 0 END
+          ) DESC,
+          ABS((CAST(width AS REAL) / height) - 1.3) ASC,
+          megapixels DESC,
+          RANDOM()
+        LIMIT ?
+      `
+      )
+      .all(...chunk, remaining);
+
+    thumbnails.push(...rows);
+  }
+
+  return thumbnails;
+}
+
+// ─── Countries ────────────────────────────────────────────────────────────────
+//
+// Source: files.country  (the column on the file itself, not locations)
+// Returns: [{ country, count, ids, thumbnails }]
+
+ipcMain.handle("location:get-countries", async (event, currentSettings = {}) => {
+  try {
+    initDatabase();
+
+    const {
+      placesSortBy = "count",
+      placesThumbnails = "random",
+      placesMinCount = 1,
+      placesExcludeFlights = false,
+    } = currentSettings;
+
+    const rows = db
+      .prepare(
+        `
+        SELECT id, country, altitude, create_date, file_type, thumbnail_path
+        FROM files
+        WHERE country IS NOT NULL
+          AND country != ''
+          ${placesExcludeFlights ? "AND (altitude IS NULL OR altitude <= 9000)" : ""}
+      `
+      )
+      .all();
+
+    const countryMap = {};
+
+    for (const row of rows) {
+      const countries = normalizeCountries(row.country);
+
+      for (const country of countries) {
+        if (!countryMap[country]) {
+          countryMap[country] = {
+            country,
+            count: 0,
+            ids: [],
+            lastVisit: 0,
+            lastThumbnail: null,
+          };
+        }
+
+        const entry = countryMap[country];
+
+        entry.count++;
+        entry.ids.push(row.id);
+
+        // track last visit
+        if (row.create_date && row.create_date > entry.lastVisit) {
+          entry.lastVisit = row.create_date;
+
+          // store thumbnail of newest item
+          if (
+            placesThumbnails === "last_visit" &&
+            row.file_type === "image" &&
+            row.thumbnail_path
+          ) {
+            entry.lastThumbnail = {
+              id: row.id,
+              thumbnail_path: row.thumbnail_path,
+            };
+          }
+        }
+      }
+    }
+
+    let result = Object.values(countryMap)
+      .filter((x) => x.count >= placesMinCount)
+      .map((entry) => {
+        const thumbnail =
+          placesThumbnails === "last_visit"
+            ? entry.lastThumbnail
+            : pickThumbnails(db, entry.ids, 1)[0];
+
+        return {
+          country: entry.country,
+          count: entry.count,
+          ids: entry.ids,
+          lastVisit: entry.lastVisit,
+          thumbnails: thumbnail ? [thumbnail] : [],
+        };
+      });
+
+    if (placesSortBy === "last_visit") {
+      result.sort((a, b) => b.lastVisit - a.lastVisit);
+    } else if (placesSortBy === "population") {
+      result.sort((a, b) => {
+        const popA = countryPopulationMap[(a.country || "").toUpperCase()] || 0;
+        const popB = countryPopulationMap[(b.country || "").toUpperCase()] || 0;
+    
+        return popB - popA;
+      });
+    } else if (placesSortBy === "alphabetical") {
+      result.sort((a, b) => a.country.localeCompare(b.country));
+    } else {
+      result.sort((a, b) => b.count - a.count);
+    }
+
+    return { success: true, data: result };
+  } catch (err) {
+    console.error("location:get-countries error:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── Regions ──────────────────────────────────────────────────────────────────
+//
+// Source: locations.subdivision  (ISO subdivision code, e.g. "CA" or "03")
+//         joined back to files for thumbnails & IDs
+// Returns: [{ country, subdivision, count, ids, thumbnails }]
+
+ipcMain.handle("location:get-regions", async (event, currentSettings = {}) => {
+  try {
+    initDatabase();
+
+    const {
+      placesSortBy = "count",
+      placesThumbnails = "random",
+      placesMinCount = 1,
+      placesExcludeFlights = false,
+    } = currentSettings;
+
+    const rows = db
+      .prepare(
+        `
+        SELECT
+          l.country,
+          l.subdivision,
+          l.population,
+          f.id,
+          f.create_date,
+          f.file_type,
+          f.thumbnail_path
+        FROM locations l
+        JOIN files f ON f.id = l.file_id
+        WHERE l.subdivision IS NOT NULL
+          AND l.subdivision != ''
+          ${placesExcludeFlights ? "AND (f.altitude IS NULL OR f.altitude <= 9000)" : ""}
+      `
+      )
+      .all();
+
+    const map = {};
+
+    for (const row of rows) {
+      const key = `${row.country}|${row.subdivision}`;
+
+      if (!map[key]) {
+        map[key] = {
+          country: row.country,
+          subdivision: row.subdivision,
+          population: row.population || 0,
+          count: 0,
+          ids: [],
+          lastVisit: 0,
+          lastThumbnail: null,
+        };
+      }
+
+      const entry = map[key];
+
+      entry.count++;
+      entry.ids.push(row.id);
+
+      if (row.create_date && row.create_date > entry.lastVisit) {
+        entry.lastVisit = row.create_date;
+
+        if (
+          placesThumbnails === "last_visit" &&
+          row.file_type === "image" &&
+          row.thumbnail_path
+        ) {
+          entry.lastThumbnail = {
+            id: row.id,
+            thumbnail_path: row.thumbnail_path,
+          };
+        }
+      }
+    }
+
+    let result = Object.values(map)
+      .filter((x) => x.count >= placesMinCount)
+      .map((entry) => {
+        const thumbnail =
+          placesThumbnails === "last_visit"
+            ? entry.lastThumbnail
+            : pickThumbnails(db, entry.ids, 1)[0];
+
+        return {
+          country: entry.country,
+          subdivision: entry.subdivision,
+          population: entry.population,
+          count: entry.count,
+          ids: entry.ids,
+          lastVisit: entry.lastVisit,
+          thumbnails: thumbnail ? [thumbnail] : [],
+        };
+      });
+
+    if (placesSortBy === "last_visit") {
+      result.sort((a, b) => b.lastVisit - a.lastVisit);
+    } else if (placesSortBy === "population") {
+      result.sort((a, b) => (b.population || 0) - (a.population || 0));
+    } else if (placesSortBy === "alphabetical") {
+      result.sort((a, b) => a.subdivision.localeCompare(b.subdivision));
+    } else {
+      result.sort((a, b) => b.count - a.count);
+    }
+
+    return { success: true, data: result };
+  } catch (err) {
+    console.error("location:get-regions error:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── Cities ───────────────────────────────────────────────────────────────────
+//
+// Source: locations.city  (nearest city / place name)
+// Returns: [{ country, subdivision, city, count, ids, thumbnails }]
+
+ipcMain.handle("location:get-cities", async (event, currentSettings = {}) => {
+  try {
+    initDatabase();
+
+    const {
+      placesSortBy = "count",
+      placesThumbnails = "random",
+      placesMinCount = 1,
+      placesExcludeFlights = false,
+    } = currentSettings;
+
+    const rows = db
+      .prepare(
+        `
+        SELECT
+          l.country,
+          l.subdivision,
+          l.population,
+          l.city,
+          f.id,
+          f.create_date,
+          f.file_type,
+          f.thumbnail_path
+        FROM locations l
+        JOIN files f ON f.id = l.file_id
+        WHERE l.city IS NOT NULL
+          AND l.city != ''
+          ${placesExcludeFlights ? "AND (f.altitude IS NULL OR f.altitude <= 9000)" : ""}
+      `
+      )
+      .all();
+
+    const map = {};
+
+    for (const row of rows) {
+      const key = `${row.country}|${row.subdivision}|${row.city}`;
+
+      if (!map[key]) {
+        map[key] = {
+          country: row.country,
+          subdivision: row.subdivision,
+          population: row.population || 0,
+          city: row.city,
+          count: 0,
+          ids: [],
+          lastVisit: 0,
+          lastThumbnail: null,
+        };
+      }
+
+      const entry = map[key];
+
+      entry.count++;
+      entry.ids.push(row.id);
+
+      // track newest visit + thumbnail in one pass
+      if (row.create_date && row.create_date > entry.lastVisit) {
+        entry.lastVisit = row.create_date;
+
+        if (
+          placesThumbnails === "last_visit" &&
+          row.file_type === "image" &&
+          row.thumbnail_path
+        ) {
+          entry.lastThumbnail = {
+            id: row.id,
+            thumbnail_path: row.thumbnail_path,
+          };
+        }
+      }
+    }
+
+    let result = Object.values(map)
+      .filter((x) => x.count >= placesMinCount)
+      .map((entry) => {
+        const thumbnail =
+          placesThumbnails === "last_visit"
+            ? entry.lastThumbnail
+            : pickThumbnails(db, entry.ids, 1)[0];
+
+        return {
+          country: entry.country,
+          subdivision: entry.subdivision,
+          population: entry.population,
+          city: entry.city,
+          count: entry.count,
+          ids: entry.ids,
+          lastVisit: entry.lastVisit,
+          thumbnails: thumbnail ? [thumbnail] : [],
+        };
+      });
+
+    if (placesSortBy === "last_visit") {
+      result.sort((a, b) => b.lastVisit - a.lastVisit);
+    } else if (placesSortBy === "population") {
+      result.sort((a, b) => (b.population || 0) - (a.population || 0));
+    } else if (placesSortBy === "alphabetical") {
+      result.sort((a, b) => a.city.localeCompare(b.city));
+    } else {
+      result.sort((a, b) => b.count - a.count);
+    }
+
+    return { success: true, data: result };
+  } catch (err) {
+    console.error("location:get-cities error:", err);
+    return { success: false, error: err.message };
+  }
+});
+
 // Helper for use in Express routes and open-in-default-viewer:
 function getDriveLetterMap() {
   // Use getSettings if it exists, otherwise fall back to reading directly
@@ -3767,4 +4257,5 @@ ipcMain.handle("maximize-app", (event) => {
 app.on("before-quit", async () => {
   await exiftool.end();
   embeddingService?.stop();
+  locationService?.stop();
 });

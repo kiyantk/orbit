@@ -2,20 +2,39 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  faArrowDown, faArrowLeft, faArrowRight, faArrowUp,
-  faHardDrive, faKeyboard, faPanorama, faPhotoFilm,
-  faTableCells, faToolbox, faUser,
+  faArrowDown,
+  faArrowLeft,
+  faArrowRight,
+  faArrowUp,
+  faHardDrive,
+  faKeyboard,
+  faPanorama,
+  faPhotoFilm,
+  faTableCells,
+  faToolbox,
+  faUser,
+  faLocationDot,
 } from "@fortawesome/free-solid-svg-icons";
 import FolderList from "./FolderList";
 import HeicPopup from "./HeicPopup";
 
-const TABS = ["User", "Media", "Explorer", "Memories", "Storage", "Controls", "App"];
+const TABS = [
+  "User",
+  "Media",
+  "Explorer",
+  "Memories",
+  "Places",
+  "Storage",
+  "Controls",
+  "App",
+];
 
 const TAB_ICONS = {
   User: faUser,
   Media: faPhotoFilm,
   Explorer: faTableCells,
   Memories: faPanorama,
+  Places: faLocationDot,
   Storage: faHardDrive,
   Controls: faKeyboard,
   App: faToolbox,
@@ -25,7 +44,17 @@ function formatBytes(bytes, decimals = 2) {
   if (!+bytes) return "0 Bytes";
   const k = 1024;
   const dm = Math.max(0, decimals);
-  const sizes = ["Bytes", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"];
+  const sizes = [
+    "Bytes",
+    "KiB",
+    "MiB",
+    "GiB",
+    "TiB",
+    "PiB",
+    "EiB",
+    "ZiB",
+    "YiB",
+  ];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
@@ -38,9 +67,12 @@ function normalizePath(path) {
 }
 
 export function resolvePathWithDriveMap(filePath, driveLetterMap) {
-  if (!filePath || !driveLetterMap || Object.keys(driveLetterMap).length === 0) return filePath;
+  if (!filePath || !driveLetterMap || Object.keys(driveLetterMap).length === 0)
+    return filePath;
   for (const [originalFolder, customLetter] of Object.entries(driveLetterMap)) {
-    const originalDrive = originalFolder.match(/^([A-Za-z]:)/)?.[1]?.toUpperCase();
+    const originalDrive = originalFolder
+      .match(/^([A-Za-z]:)/)?.[1]
+      ?.toUpperCase();
     if (!originalDrive || !customLetter) continue;
     const normalizedCustom = customLetter.replace(/:?$/, ":").toUpperCase();
     if (filePath.toUpperCase().startsWith(originalDrive)) {
@@ -70,13 +102,26 @@ const ConfirmPopup = ({ message, subMessage, onConfirm, onCancel }) => (
       <div className="welcome-popup-content">
         <span style={{ color: "#ccc" }}>
           {message}
-          <br /><br />
+          <br />
+          <br />
           <strong>{subMessage}</strong>
         </span>
       </div>
       <div className="settings-bottom-bar" style={{ gap: 8 }}>
-        <button className="settings-cancel-btn" style={{ backgroundColor: "#2d2a35" }} onClick={onCancel}>No</button>
-        <button className="settings-save-btn" style={{ backgroundColor: "#ff6b6b" }} onClick={onConfirm}>Yes</button>
+        <button
+          className="settings-cancel-btn"
+          style={{ backgroundColor: "#2d2a35" }}
+          onClick={onCancel}
+        >
+          No
+        </button>
+        <button
+          className="settings-save-btn"
+          style={{ backgroundColor: "#ff6b6b" }}
+          onClick={onConfirm}
+        >
+          Yes
+        </button>
       </div>
     </div>
   </div>
@@ -96,7 +141,9 @@ const SmartSearchStatus = () => {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const s = await window.electron.ipcRenderer.invoke("embedding:get-status");
+      const s = await window.electron.ipcRenderer.invoke(
+        "embedding:get-status",
+      );
       if (s) setStatus(s);
     } catch {}
     setLoading(false);
@@ -111,13 +158,18 @@ const SmartSearchStatus = () => {
 
   // Also listen for push updates from the background service
   useEffect(() => {
-    const handler = (data) => { if (data) setStatus(data); setLoading(false); };
+    const handler = (data) => {
+      if (data) setStatus(data);
+      setLoading(false);
+    };
     window.electron.ipcRenderer.on("embedding-progress", handler);
-    return () => window.electron.ipcRenderer.removeListener("embedding-progress", handler);
+    return () =>
+      window.electron.ipcRenderer.removeListener("embedding-progress", handler);
   }, []);
 
   const isComplete = status.total > 0 && status.done >= status.total;
-  const percentage = status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
+  const percentage =
+    status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
 
   // ── Determine status label & colour ──
   let statusLabel;
@@ -150,7 +202,10 @@ const SmartSearchStatus = () => {
     <div className="smart-search-status-panel">
       <div className="smart-search-status-header">
         <span className="smart-search-status-title">Smart Search</span>
-        <span className="smart-search-status-badge" style={{ color: statusColor }}>
+        <span
+          className="smart-search-status-badge"
+          style={{ color: statusColor }}
+        >
           {statusLabel}
         </span>
       </div>
@@ -168,16 +223,15 @@ const SmartSearchStatus = () => {
             />
           </div>
           <div className="smart-search-status-counts">
-            {status.done.toLocaleString()} / {status.total.toLocaleString()} images
+            {status.done.toLocaleString()} / {status.total.toLocaleString()}{" "}
+            images
           </div>
         </>
       )}
 
       {/* Error detail */}
       {status.initError && (
-        <div className="smart-search-status-error">
-          {status.initError}
-        </div>
+        <div className="smart-search-status-error">{status.initError}</div>
       )}
 
       {/* Info line */}
@@ -204,7 +258,10 @@ const SettingsView = ({
   enterRemoveMode,
 }) => {
   const [selectedTab, setSelectedTab] = useState("User");
-  const [settings, setSettings] = useState({ driveLetterMap: {}, ...currentSettings });
+  const [settings, setSettings] = useState({
+    driveLetterMap: {},
+    ...currentSettings,
+  });
   const [isIndexing, setIsIndexing] = useState(false);
   const [indexingStatus, setIndexingStatus] = useState(null);
   const [missingHeicFiles, setMissingHeicFiles] = useState([]);
@@ -215,9 +272,15 @@ const SettingsView = ({
 
   const [confirmPopup, setConfirmPopup] = useState(null);
 
+  const [locationStatus, setLocationStatus] = useState({
+    total: 0,
+    done: 0,
+    percentage: 0,
+  });
+
   const ipc = useCallback(
     (channel, ...args) => window.electron.ipcRenderer.invoke(channel, ...args),
-    []
+    [],
   );
 
   const saveSettings = useCallback(
@@ -230,22 +293,28 @@ const SettingsView = ({
         console.error("Error saving settings:", err);
       }
     },
-    [applySettings, ipc]
+    [applySettings, ipc],
   );
 
   const updateSettings = useCallback((patch) => {
     setSettings((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  const handleCheckbox = (key) => (e) => updateSettings({ [key]: e.target.checked });
-  const handleSelect = (key) => (e) => updateSettings({ [key]: e.target.value });
+  const handleCheckbox = (key) => (e) =>
+    updateSettings({ [key]: e.target.checked });
+  const handleSelect = (key) => (e) =>
+    updateSettings({ [key]: e.target.value });
 
   const handleUsernameChange = (e) => {
     const v = e.target.value;
     if (
       v !== "" &&
-      (v.length > 32 || /\s{2,}/.test(v) || !/^[a-zA-Z0-9 _-]+$/.test(v) || /^\s|\s$/.test(v))
-    ) return;
+      (v.length > 32 ||
+        /\s{2,}/.test(v) ||
+        !/^[a-zA-Z0-9 _-]+$/.test(v) ||
+        /^\s|\s$/.test(v))
+    )
+      return;
     updateSettings({ username: v });
   };
 
@@ -271,6 +340,34 @@ const SettingsView = ({
   }, [ipc]);
 
   useEffect(() => {
+    let interval;
+
+    const fetchLocationStatus = async () => {
+      try {
+        const s = await window.electron.ipcRenderer.invoke(
+          "location:get-status",
+        );
+        if (s) setLocationStatus(s);
+      } catch {}
+    };
+
+    fetchLocationStatus();
+    interval = setInterval(fetchLocationStatus, 4000);
+
+    // optional: live updates if you later emit events
+    const handler = (data) => {
+      if (data) setLocationStatus(data);
+    };
+
+    window.electron.ipcRenderer.on("location-progress", handler);
+
+    return () => {
+      clearInterval(interval);
+      window.electron.ipcRenderer.removeListener("location-progress", handler);
+    };
+  }, []);
+
+  useEffect(() => {
     if (newTab) setSelectedTab(newTab);
   }, [newTab]);
 
@@ -291,20 +388,29 @@ const SettingsView = ({
         setIndexingStatus(
           total > 0
             ? `Indexing: ${processed}/${total} files (${percentage}%)`
-            : filename ? `Indexing: ${filename}` : "Indexing files..."
+            : filename
+              ? `Indexing: ${filename}`
+              : "Indexing files...",
         );
       } else {
         setIndexingStatus(data ? `Indexing: ${data}` : "Indexing files...");
       }
     };
     window.electron.ipcRenderer.on("indexing-progress", handleProgress);
-    return () => window.electron.ipcRenderer.removeListener("indexing-progress", handleProgress);
+    return () =>
+      window.electron.ipcRenderer.removeListener(
+        "indexing-progress",
+        handleProgress,
+      );
   }, []);
 
   // ─── Folder actions ──────────────────────────────────────────────────────────
 
   const startIndex = async (folders) => {
-    if (!folders.length) { setIndexingStatus("Please select at least one folder to index"); return; }
+    if (!folders.length) {
+      setIndexingStatus("Please select at least one folder to index");
+      return;
+    }
     setIsIndexing(true);
     setShowToolsPopup(false);
     try {
@@ -323,7 +429,9 @@ const SettingsView = ({
       if (!folders.length) return;
       setSettings((prev) => {
         const existing = prev.indexedFolders.map(normalizePath);
-        const unique = folders.filter((f) => !existing.includes(normalizePath(f)));
+        const unique = folders.filter(
+          (f) => !existing.includes(normalizePath(f)),
+        );
         startIndex(folders);
         return { ...prev, indexedFolders: [...prev.indexedFolders, ...unique] };
       });
@@ -344,7 +452,8 @@ const SettingsView = ({
     });
     try {
       const res = await ipc("remove-folder-data", folderPath);
-      if (!res.success) console.error("Failed to remove folder data:", res.error);
+      if (!res.success)
+        console.error("Failed to remove folder data:", res.error);
     } catch (err) {
       console.error("Error removing folder:", err);
     }
@@ -365,7 +474,8 @@ const SettingsView = ({
     for (const folder of settings.indexedFolders) {
       try {
         const res = await ipc("remove-folder-data", folder);
-        if (!res.success) console.error("Failed to remove folder data:", res.error);
+        if (!res.success)
+          console.error("Failed to remove folder data:", res.error);
       } catch (err) {
         console.error("Error removing folder:", err);
       }
@@ -376,7 +486,8 @@ const SettingsView = ({
   const handleRemoveAll = () => {
     setConfirmPopup({
       message: "Remove ALL indexed sources?",
-      subMessage: "This will delete all index data and thumbnails. This cannot be undone.",
+      subMessage:
+        "This will delete all index data and thumbnails. This cannot be undone.",
       onConfirm: () => {
         setConfirmPopup(null);
         doRemoveAll();
@@ -386,44 +497,45 @@ const SettingsView = ({
 
   // ─── Tool actions ────────────────────────────────────────────────────────────
 
-const runTool = useCallback(
-  async (channel, label, after) => {
-    setIndexingStatus(`${label}...`);
-    setIsIndexing(true);
-    setShowToolsPopup(false);
+  const runTool = useCallback(
+    async (channel, label, after) => {
+      setIndexingStatus(`${label}...`);
+      setIsIndexing(true);
+      setShowToolsPopup(false);
 
-    try {
-      const result = await ipc(channel);
+      try {
+        const result = await ipc(channel);
 
-      setIndexingStatus(
-        result.success ? result.message : `Error: ${result.error}`
-      );
+        setIndexingStatus(
+          result.success ? result.message : `Error: ${result.error}`,
+        );
 
-      if (result.success && after) {
-        await after(result);
+        if (result.success && after) {
+          await after(result);
+        }
+
+        if (result.success) {
+          setTimeout(() => setIndexingStatus(null), 5000);
+        }
+      } catch (err) {
+        setIndexingStatus(`Error: ${err.message}`);
       }
 
-      if (result.success) {
-        setTimeout(() => setIndexingStatus(null), 5000);
-      }
-    } catch (err) {
-      setIndexingStatus(`Error: ${err.message}`);
-    }
-
-    setIsIndexing(false);
-  },
-  [ipc]
-);
+      setIsIndexing(false);
+    },
+    [ipc],
+  );
 
   const fixThumbnails = () =>
-  runTool("fix-thumbnails", "Fixing thumbnails", async () => {
-    await runTool(
-      "generate-derived-thumbnails",
-      "Generating 64px thumbnails"
-    );
-  });
+    runTool("fix-thumbnails", "Fixing thumbnails", async () => {
+      await runTool(
+        "generate-derived-thumbnails",
+        "Generating 64px thumbnails",
+      );
+    });
   const fixIDs = () => runTool("fix-media-ids", "Fixing media IDs");
-  const cleanupThumbnails = () => runTool("cleanup-thumbnails", "Scanning for orphaned thumbnails");
+  const cleanupThumbnails = () =>
+    runTool("cleanup-thumbnails", "Scanning for orphaned thumbnails");
 
   const getUsageData = async () => {
     setIsFetchingUsage(true);
@@ -444,7 +556,6 @@ const runTool = useCallback(
   return (
     <div className="settings-view">
       <div className="settings-main">
-
         <div className="settings-list">
           <h2>Settings</h2>
           <ul>
@@ -462,16 +573,26 @@ const runTool = useCallback(
         </div>
 
         <div className="settings-content">
-
           {selectedTab === "User" && (
             <div>
               <SettingsRow>
                 <span>Username:</span>
-                <input className="settings-content-input" type="text" value={settings.username} onChange={handleUsernameChange} />
+                <input
+                  className="settings-content-input"
+                  type="text"
+                  value={settings.username}
+                  onChange={handleUsernameChange}
+                />
               </SettingsRow>
               <SettingsRow>
                 <span>Birthdate:</span>
-                <input className="settings-content-input" type="date" style={{ colorScheme: "dark" }} value={settings.birthDate} onChange={handleSelect("birthDate")} />
+                <input
+                  className="settings-content-input"
+                  type="date"
+                  style={{ colorScheme: "dark" }}
+                  value={settings.birthDate}
+                  onChange={handleSelect("birthDate")}
+                />
               </SettingsRow>
             </div>
           )}
@@ -481,26 +602,43 @@ const runTool = useCallback(
               <SettingsRow>
                 <div className="slider-wrapper">
                   <label className="switch">
-                    <input type="checkbox" checked={!!settings.adjustHeicColors} onChange={handleCheckbox("adjustHeicColors")} />
+                    <input
+                      type="checkbox"
+                      checked={!!settings.adjustHeicColors}
+                      onChange={handleCheckbox("adjustHeicColors")}
+                    />
                     <div className="slider round"></div>
                   </label>
                 </div>
                 <span>Adjust HEIC colors</span>
-                <span className="settings-hint">Recommended. Improves color accuracy for HEIC photos.</span>
+                <span className="settings-hint">
+                  Recommended. Improves color accuracy for HEIC photos.
+                </span>
               </SettingsRow>
               <SettingsRow>
                 <div className="slider-wrapper">
                   <label className="switch">
-                    <input type="checkbox" checked={!!settings.preloadHeic} onChange={handleCheckbox("preloadHeic")} />
+                    <input
+                      type="checkbox"
+                      checked={!!settings.preloadHeic}
+                      onChange={handleCheckbox("preloadHeic")}
+                    />
                     <div className="slider round"></div>
                   </label>
                 </div>
                 <span>Preload HEIC on hover</span>
-                <span className="settings-hint">Experimental. Can significantly reduce loading times for HEIC files by decoding them in the background while hovering.</span>
+                <span className="settings-hint">
+                  Experimental. Can significantly reduce loading times for HEIC
+                  files by decoding them in the background while hovering.
+                </span>
               </SettingsRow>
               <SettingsRow>
                 <span>Default sort:</span>
-                <select value={settings.defaultSort} onChange={handleSelect("defaultSort")} className="settings-itemstyle-select">
+                <select
+                  value={settings.defaultSort}
+                  onChange={handleSelect("defaultSort")}
+                  className="settings-itemstyle-select"
+                >
                   <option value="media_id">ID (default)</option>
                   <option value="name">Name</option>
                   <option value="create_date">Date Taken</option>
@@ -524,13 +662,23 @@ const runTool = useCallback(
                 </select>
               </SettingsRow> */}
               <SettingsRow>
-                <span style={settings.explorerLayout !== "grid" ? { opacity: 0.4 } : {}}>Item text:</span>
+                <span
+                  style={
+                    settings.explorerLayout !== "grid" ? { opacity: 0.4 } : {}
+                  }
+                >
+                  Item text:
+                </span>
                 <select
                   value={settings.itemText}
                   onChange={handleSelect("itemText")}
                   className="settings-itemstyle-select"
                   disabled={settings.explorerLayout !== "grid"}
-                  style={settings.explorerLayout !== "grid" ? { opacity: 0.4, cursor: "not-allowed" } : {}}
+                  style={
+                    settings.explorerLayout !== "grid"
+                      ? { opacity: 0.4, cursor: "not-allowed" }
+                      : {}
+                  }
                 >
                   <option value="filename">Filename (default)</option>
                   <option value="datetime">Date</option>
@@ -549,12 +697,22 @@ const runTool = useCallback(
                     <div className="slider round"></div>
                   </label>
                 </div>
-                <span style={settings.explorerLayout !== "grid" ? { opacity: 0.4 } : {}}>No gutters</span>
+                <span
+                  style={
+                    settings.explorerLayout !== "grid" ? { opacity: 0.4 } : {}
+                  }
+                >
+                  No gutters
+                </span>
               </SettingsRow>
               <SettingsRow>
                 <div className="slider-wrapper">
                   <label className="switch">
-                    <input type="checkbox" checked={!!settings.explorerDateScroll} onChange={handleCheckbox("explorerDateScroll")} />
+                    <input
+                      type="checkbox"
+                      checked={!!settings.explorerDateScroll}
+                      onChange={handleCheckbox("explorerDateScroll")}
+                    />
                     <div className="slider round"></div>
                   </label>
                 </div>
@@ -567,7 +725,11 @@ const runTool = useCallback(
             <div>
               <SettingsRow>
                 <span>Open memories in:</span>
-                <select value={settings.openMemoriesIn} onChange={handleSelect("openMemoriesIn")} className="settings-itemstyle-select">
+                <select
+                  value={settings.openMemoriesIn}
+                  onChange={handleSelect("openMemoriesIn")}
+                  className="settings-itemstyle-select"
+                >
                   <option value="explorer">Explorer (default)</option>
                   <option value="shuffle">Shuffle</option>
                   <option value="map">Map</option>
@@ -575,10 +737,90 @@ const runTool = useCallback(
               </SettingsRow>
               <SettingsRow>
                 <span>Memories layout:</span>
-                <select value={settings.memoriesLayout} onChange={handleSelect("memoriesLayout")} className="settings-itemstyle-select">
+                <select
+                  value={settings.memoriesLayout}
+                  onChange={handleSelect("memoriesLayout")}
+                  className="settings-itemstyle-select"
+                >
                   <option value="list">List (default)</option>
                   <option value="grid">Grid</option>
                 </select>
+              </SettingsRow>
+            </div>
+          )}
+
+          {selectedTab === "Places" && (
+            <div>
+              <SettingsRow>
+                <span>Sort places by:</span>
+                <select
+                  value={settings.placesSortBy}
+                  onChange={handleSelect("placesSortBy")}
+                  className="settings-itemstyle-select"
+                >
+                  <option value="count">Item count (default)</option>
+                  <option value="last_visit">Last visit</option>
+                  <option value="population">Population</option>
+                  <option value="alphabetical">Alphabetical</option>
+                </select>
+              </SettingsRow>
+
+              <SettingsRow>
+                <span>Thumbnails:</span>
+                <select
+                  value={settings.placesThumbnails}
+                  onChange={handleSelect("placesThumbnails")}
+                  className="settings-itemstyle-select"
+                >
+                  <option value="random">Random (default)</option>
+                  <option value="last_visit">Last visit</option>
+                </select>
+              </SettingsRow>
+
+              <SettingsRow>
+                <span>Subtitles:</span>
+                <select
+                  value={settings.placesSubtitles}
+                  onChange={handleSelect("placesSubtitles")}
+                  className="settings-itemstyle-select"
+                >
+                  <option value="count">Item count (default)</option>
+                  <option value="last_visit">Last visit</option>
+                </select>
+              </SettingsRow>
+
+              <SettingsRow>
+                <span>Minimum item count:</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={settings.placesMinCount ?? 1}
+                  onChange={(e) =>
+                    updateSettings({
+                      placesMinCount: Math.max(1, Number(e.target.value) || 1),
+                    })
+                  }
+                  className="settings-content-input"
+                  style={{ width: 100 }}
+                />
+              </SettingsRow>
+
+              <SettingsRow>
+                <div className="slider-wrapper">
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={!!settings.placesExcludeFlights}
+                      onChange={handleCheckbox("placesExcludeFlights")}
+                    />
+                    <div className="slider round"></div>
+                  </label>
+                </div>
+
+                <span>Exclude flights</span>
+                <span className="settings-hint">
+                  Hides items with altitude higher than 9000 meters.
+                </span>
               </SettingsRow>
             </div>
           )}
@@ -594,19 +836,81 @@ const runTool = useCallback(
                 onSetDriveLetter={handleSetDriveLetter}
               />
               <div className="settings-media-buttons">
-                <button className="welcome-popup-select-folders-btn" onClick={selectFolders} disabled={isIndexing}>Add Source</button>
-                <button className="welcome-popup-select-folders-btn" onClick={handleRemoveAll} disabled={isIndexing || (settings && !settings.indexedFolders.length)}>Remove All</button>
-                <button className="welcome-popup-select-folders-btn" onClick={() => setShowToolsPopup(true)} disabled={isIndexing || (settings && !settings.indexedFolders.length)}>Tools</button>
+                <button
+                  className="welcome-popup-select-folders-btn"
+                  onClick={selectFolders}
+                  disabled={isIndexing}
+                >
+                  Add Source
+                </button>
+                <button
+                  className="welcome-popup-select-folders-btn"
+                  onClick={handleRemoveAll}
+                  disabled={
+                    isIndexing || (settings && !settings.indexedFolders.length)
+                  }
+                >
+                  Remove All
+                </button>
+                <button
+                  className="welcome-popup-select-folders-btn"
+                  onClick={() => setShowToolsPopup(true)}
+                  disabled={
+                    isIndexing || (settings && !settings.indexedFolders.length)
+                  }
+                >
+                  Tools
+                </button>
               </div>
               {indexingStatus && (
                 <div className="welcome-popup-status">
-                  <span>{indexingStatus}</span><br /><span>Don't close the app</span>
+                  <span>{indexingStatus}</span>
+                  <br />
+                  <span>Don't close the app</span>
                 </div>
               )}
               <h3 style={{ marginTop: 18 }}>Smart search</h3>
               {/* ── Smart Search Status ── */}
               <div style={{ marginTop: 10 }}>
                 <SmartSearchStatus />
+              </div>
+              <h3 style={{ marginTop: 18 }}>Location indexing</h3>
+
+              <div
+                className="smart-search-status-panel"
+                style={{ marginTop: 10 }}
+              >
+                <div className="smart-search-status-header">
+                  <span className="smart-search-status-title">Locations</span>
+
+                  <span
+                    className="smart-search-status-badge"
+                    style={{ color: "#8f8f8f" }}
+                  >
+                    {locationStatus.total === 0
+                      ? "Idle"
+                      : `${Math.round((locationStatus.done / locationStatus.total) * 100)}%`}
+                  </span>
+                </div>
+
+                {locationStatus.total > 0 && (
+                  <>
+                    <div className="smart-search-status-bar-track">
+                      <div
+                        className="smart-search-status-bar-fill"
+                        style={{
+                          width: `${(locationStatus.done / locationStatus.total) * 100}%`,
+                          backgroundColor: "#a78bfa",
+                        }}
+                      />
+                    </div>
+
+                    <div className="smart-search-status-counts">
+                      {locationStatus.done.toLocaleString()} /{" "}
+                      {locationStatus.total.toLocaleString()} locations
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -619,107 +923,181 @@ const runTool = useCallback(
                   className="settings-normal-button"
                   onClick={getUsageData}
                   disabled={isFetchingUsage}
-                  style={isFetchingUsage ? { opacity: 0.5, cursor: "not-allowed" } : {}}
+                  style={
+                    isFetchingUsage
+                      ? { opacity: 0.5, cursor: "not-allowed" }
+                      : {}
+                  }
                 >
                   {isFetchingUsage ? "Loading..." : "Fetch"}
                 </button>
               </SettingsRow>
-          
-              {storageUsage && (() => {
-                const { appStorageUsed, dbSize, thumbSize, tables = {} } = storageUsage;
-              
-                const tableDefs = [
-                  { key: "files",         label: "File Index",      color: "#a78bfa" },
-                  { key: "embeddings",    label: "Smart Search", color: "#60a5fa" },
-                  { key: "memories",      label: "Memories",   color: "#f472b6" },
-                  { key: "tags",          label: "Tags",       color: "#34d399" },
-                  { key: "removed_files", label: "Removed",    color: "#fb523c" },
-                ];
-              
-                const dbOtherBytes = Math.max(0, dbSize - tableDefs.reduce((s, d) => s + (tables[d.key]?.bytes ?? 0), 0));
-              
-                // Bar excludes App Total (which is just dbSize + thumbSize, not additive)
-                const segments = [
-                  ...tableDefs.map(d => ({ label: d.label, color: d.color, bytes: tables[d.key]?.bytes ?? 0 })),
-                  { label: "DB overhead", color: "#afafaf", bytes: dbOtherBytes },
-                  { label: "Thumbnails",  color: "#fbbf24", bytes: thumbSize },
-                ].filter(s => s.bytes > 0);
-              
-                const total = (dbSize + thumbSize) || 1;
-              
-                const topItems = [
-                  { color: "#7e30fa", label: "App Total", val: appStorageUsed },
-                ];
 
-                const midItems = [
-                  { color: "#afafaf", label: "Database",   val: dbSize },
-                  { color: "#fbbf24", label: "Thumbnails", val: thumbSize },  // matches bar segment color
-                ];
+              {storageUsage &&
+                (() => {
+                  const {
+                    appStorageUsed,
+                    dbSize,
+                    thumbSize,
+                    tables = {},
+                  } = storageUsage;
 
-                const tableItems = tableDefs.map(d => ({
-                  color: d.color,
-                  label: d.label,
-                  val: tables[d.key]?.bytes ?? 0,
-                  rows: tables[d.key]?.rows ?? 0,
-                }));
-              
-                const dot = (color) => (
-                  <div style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: color, flexShrink: 0 }} />
-                );
-              
-                return (
-                  <>
-                    {/* Distribution bar — db segments + thumbnails, no "App Total" wrapper */}
-                    <div style={{ display: "flex", height: 10, borderRadius: 6, overflow: "hidden", marginTop: 12, width: "40%", gap: 2 }}>
-                      {segments.map((s, i) => (
-                        <div
-                          key={i}
-                          title={`${s.label}: ${formatBytes(s.bytes)}`}
-                          style={{
-                            width: `${(s.bytes / total) * 100}%`,
-                            backgroundColor: s.color,
-                            minWidth: s.bytes > 0 ? 3 : 0,
-                            transition: "width 0.3s ease",
-                          }}
-                        />
-                      ))}
-                    </div>                 
-                    {/* Legend */}
-                    <div className="storage-bar-container" style={{ marginTop: 12 }}>
-                      <div className="storage-legend">
-                        {/* App Total */}
-                        {topItems.map(({ color, label, val }) => (
-                          <span key={label} className="storage-legend-text">
-                            {dot(color)}
-                            {label}: {val > 0 ? formatBytes(val) : "0 Bytes"}
-                          </span>
-                        ))}
+                  const tableDefs = [
+                    { key: "files", label: "File Index", color: "#a78bfa" },
+                    {
+                      key: "embeddings",
+                      label: "Smart Search",
+                      color: "#60a5fa",
+                    },
+                    { key: "memories", label: "Memories", color: "#f472b6" },
+                    { key: "tags", label: "Tags", color: "#34d399" },
+                    {
+                      key: "removed_files",
+                      label: "Removed",
+                      color: "#fb523c",
+                    },
+                  ];
 
-                        <div style={{ width: "100%", height: 1, backgroundColor: "#2d2a35", margin: "6px 0" }} />
-                      
-                        {/* Database + Thumbnails */}
-                        {midItems.map(({ color, label, val }) => (
-                          <span key={label} className="storage-legend-text">
-                            {dot(color)}
-                            {label}: {val > 0 ? formatBytes(val) : "0 Bytes"}
-                          </span>
-                        ))}
+                  const dbOtherBytes = Math.max(
+                    0,
+                    dbSize -
+                      tableDefs.reduce(
+                        (s, d) => s + (tables[d.key]?.bytes ?? 0),
+                        0,
+                      ),
+                  );
 
-                        <div style={{ width: "100%", height: 1, backgroundColor: "#2d2a35", margin: "6px 0" }} />
-                      
-                        {/* Per-table breakdown */}
-                        {tableItems.map(({ color, label, val, rows }) => (
-                          <span key={label} className="storage-legend-text">
-                            {dot(color)}
-                            {label}: {val > 0 ? formatBytes(val) : "0 Bytes"}
-                            <span style={{ color: "#666", marginLeft: 4 }}>({rows.toLocaleString()})</span>
-                          </span>
+                  // Bar excludes App Total (which is just dbSize + thumbSize, not additive)
+                  const segments = [
+                    ...tableDefs.map((d) => ({
+                      label: d.label,
+                      color: d.color,
+                      bytes: tables[d.key]?.bytes ?? 0,
+                    })),
+                    {
+                      label: "DB overhead",
+                      color: "#afafaf",
+                      bytes: dbOtherBytes,
+                    },
+                    { label: "Thumbnails", color: "#fbbf24", bytes: thumbSize },
+                  ].filter((s) => s.bytes > 0);
+
+                  const total = dbSize + thumbSize || 1;
+
+                  const topItems = [
+                    {
+                      color: "#7e30fa",
+                      label: "App Total",
+                      val: appStorageUsed,
+                    },
+                  ];
+
+                  const midItems = [
+                    { color: "#afafaf", label: "Database", val: dbSize },
+                    { color: "#fbbf24", label: "Thumbnails", val: thumbSize }, // matches bar segment color
+                  ];
+
+                  const tableItems = tableDefs.map((d) => ({
+                    color: d.color,
+                    label: d.label,
+                    val: tables[d.key]?.bytes ?? 0,
+                    rows: tables[d.key]?.rows ?? 0,
+                  }));
+
+                  const dot = (color) => (
+                    <div
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: "50%",
+                        backgroundColor: color,
+                        flexShrink: 0,
+                      }}
+                    />
+                  );
+
+                  return (
+                    <>
+                      {/* Distribution bar — db segments + thumbnails, no "App Total" wrapper */}
+                      <div
+                        style={{
+                          display: "flex",
+                          height: 10,
+                          borderRadius: 6,
+                          overflow: "hidden",
+                          marginTop: 12,
+                          width: "40%",
+                          gap: 2,
+                        }}
+                      >
+                        {segments.map((s, i) => (
+                          <div
+                            key={i}
+                            title={`${s.label}: ${formatBytes(s.bytes)}`}
+                            style={{
+                              width: `${(s.bytes / total) * 100}%`,
+                              backgroundColor: s.color,
+                              minWidth: s.bytes > 0 ? 3 : 0,
+                              transition: "width 0.3s ease",
+                            }}
+                          />
                         ))}
                       </div>
-                    </div>
-                  </>
-                );
-              })()}
+                      {/* Legend */}
+                      <div
+                        className="storage-bar-container"
+                        style={{ marginTop: 12 }}
+                      >
+                        <div className="storage-legend">
+                          {/* App Total */}
+                          {topItems.map(({ color, label, val }) => (
+                            <span key={label} className="storage-legend-text">
+                              {dot(color)}
+                              {label}: {val > 0 ? formatBytes(val) : "0 Bytes"}
+                            </span>
+                          ))}
+
+                          <div
+                            style={{
+                              width: "100%",
+                              height: 1,
+                              backgroundColor: "#2d2a35",
+                              margin: "6px 0",
+                            }}
+                          />
+
+                          {/* Database + Thumbnails */}
+                          {midItems.map(({ color, label, val }) => (
+                            <span key={label} className="storage-legend-text">
+                              {dot(color)}
+                              {label}: {val > 0 ? formatBytes(val) : "0 Bytes"}
+                            </span>
+                          ))}
+
+                          <div
+                            style={{
+                              width: "100%",
+                              height: 1,
+                              backgroundColor: "#2d2a35",
+                              margin: "6px 0",
+                            }}
+                          />
+
+                          {/* Per-table breakdown */}
+                          {tableItems.map(({ color, label, val, rows }) => (
+                            <span key={label} className="storage-legend-text">
+                              {dot(color)}
+                              {label}: {val > 0 ? formatBytes(val) : "0 Bytes"}
+                              <span style={{ color: "#666", marginLeft: 4 }}>
+                                ({rows.toLocaleString()})
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
             </div>
           )}
 
@@ -728,21 +1106,39 @@ const runTool = useCallback(
               <h3>General</h3>
               <SettingsRow>
                 <span>Quick minimize:</span>
-                <ShortcutKey>~</ShortcutKey> <span>or</span> <ShortcutKey>`</ShortcutKey>
+                <ShortcutKey>~</ShortcutKey> <span>or</span>{" "}
+                <ShortcutKey>`</ShortcutKey>
               </SettingsRow>
               <br />
               <h3>Explorer</h3>
               {[
-                { label: "Show preview:", keys: [<ShortcutKey key="lmb">Left Mouse Button</ShortcutKey>] },
-                { label: "Open fullscreen:", keys: [<ShortcutKey key="dlmb">Double Left Mouse Button</ShortcutKey>] },
+                {
+                  label: "Show preview:",
+                  keys: [
+                    <ShortcutKey key="lmb">Left Mouse Button</ShortcutKey>,
+                  ],
+                },
+                {
+                  label: "Open fullscreen:",
+                  keys: [
+                    <ShortcutKey key="dlmb">
+                      Double Left Mouse Button
+                    </ShortcutKey>,
+                  ],
+                },
                 {
                   label: "Open in default viewer:",
-                  keys: [<ShortcutKey key="ctrl">CTRL</ShortcutKey>, <span>+</span>, <ShortcutKey key="lmb2">Left Mouse Button</ShortcutKey>],
+                  keys: [
+                    <ShortcutKey key="ctrl">CTRL</ShortcutKey>,
+                    <span>+</span>,
+                    <ShortcutKey key="lmb2">Left Mouse Button</ShortcutKey>,
+                  ],
                 },
                 {
                   label: "Navigate:",
                   keys: [
-                    <ShortcutKey key="scroll">SCROLL</ShortcutKey>, <span>or</span>,
+                    <ShortcutKey key="scroll">SCROLL</ShortcutKey>,
+                    <span>or</span>,
                     <ShortcutKey key="arrows">
                       <FontAwesomeIcon icon={faArrowLeft} />{" "}
                       <FontAwesomeIcon icon={faArrowUp} />{" "}
@@ -753,9 +1149,16 @@ const runTool = useCallback(
                 },
                 {
                   label: "Scale grid:",
-                  keys: [<ShortcutKey key="ctrl">CTRL</ShortcutKey>, <span>+</span>, <ShortcutKey key="scroll">SCROLL</ShortcutKey>],
+                  keys: [
+                    <ShortcutKey key="ctrl">CTRL</ShortcutKey>,
+                    <span>+</span>,
+                    <ShortcutKey key="scroll">SCROLL</ShortcutKey>,
+                  ],
                 },
-                { label: "Assign last used tag to selected item:", keys: [<ShortcutKey key="t">T</ShortcutKey>] },
+                {
+                  label: "Assign last used tag to selected item:",
+                  keys: [<ShortcutKey key="t">T</ShortcutKey>],
+                },
               ].map(({ label, keys }) => (
                 <SettingsRow key={label}>
                   <span>{label}</span> {keys}
@@ -767,27 +1170,48 @@ const runTool = useCallback(
           {selectedTab === "App" && (
             <div>
               <SettingsRow>
-                <img width="44" src={`${process.env.PUBLIC_URL}/logo-v2-orbit-bright-white-shadow-small.png`} alt="Orbit logo" />
+                <img
+                  width="44"
+                  src={`${process.env.PUBLIC_URL}/logo-v2-orbit-bright-white-shadow-small.png`}
+                  alt="Orbit logo"
+                />
                 <span>Orbit 1.2.0</span>
               </SettingsRow>
               <SettingsRow>
-                <button className="settings-normal-button" onClick={openAppLocation}>Open app directory</button>
+                <button
+                  className="settings-normal-button"
+                  onClick={openAppLocation}
+                >
+                  Open app directory
+                </button>
               </SettingsRow>
               <SettingsRow>
-                <button className="settings-normal-button" onClick={openDataLocation}>Open data directory</button>
+                <button
+                  className="settings-normal-button"
+                  onClick={openDataLocation}
+                >
+                  Open data directory
+                </button>
               </SettingsRow>
               <SettingsRow>
-                <button className="settings-normal-button" onClick={toggleFullscreen}>Toggle Fullscreen</button>
+                <button
+                  className="settings-normal-button"
+                  onClick={toggleFullscreen}
+                >
+                  Toggle Fullscreen
+                </button>
               </SettingsRow>
             </div>
           )}
-
         </div>
       </div>
 
       {/* ── Popups ── */}
       {showHeicPopup && (
-        <HeicPopup missingFiles={missingHeicFiles} onClose={() => setShowHeicPopup(false)} />
+        <HeicPopup
+          missingFiles={missingHeicFiles}
+          onClose={() => setShowHeicPopup(false)}
+        />
       )}
       {showToolsPopup && (
         <div className="welcome-popup-overlay">
@@ -796,19 +1220,70 @@ const runTool = useCallback(
             <p>Select which tool to run:</p>
             <div className="tools-popup-content">
               {[
-                { label: "Index New Files", action: () => {setShowToolsPopup(false); startIndex(settings.indexedFolders) } },
-                { label: "Check Status", action: () => { setShowToolsPopup(false); checkStatusses(); } },
-                { label: "Verify IDs", action: () => { setShowToolsPopup(false); fixIDs(); } },
-                { label: "Verify Thumbnails", action: () => { setShowToolsPopup(false); fixThumbnails(); } },
-                { label: "Cleanup Thumbnails", action: () => { setShowToolsPopup(false); cleanupThumbnails(); } },
-                { label: "Generate HEIC Thumbnails", action: () => { setShowToolsPopup(false); setShowHeicPopup(true) } },
-                { label: "Remove Mode", action: () => { setShowToolsPopup(false); enterRemoveMode(); } },
+                {
+                  label: "Index New Files",
+                  action: () => {
+                    setShowToolsPopup(false);
+                    startIndex(settings.indexedFolders);
+                  },
+                },
+                {
+                  label: "Check Status",
+                  action: () => {
+                    setShowToolsPopup(false);
+                    checkStatusses();
+                  },
+                },
+                {
+                  label: "Verify IDs",
+                  action: () => {
+                    setShowToolsPopup(false);
+                    fixIDs();
+                  },
+                },
+                {
+                  label: "Verify Thumbnails",
+                  action: () => {
+                    setShowToolsPopup(false);
+                    fixThumbnails();
+                  },
+                },
+                {
+                  label: "Cleanup Thumbnails",
+                  action: () => {
+                    setShowToolsPopup(false);
+                    cleanupThumbnails();
+                  },
+                },
+                {
+                  label: "Generate HEIC Thumbnails",
+                  action: () => {
+                    setShowToolsPopup(false);
+                    setShowHeicPopup(true);
+                  },
+                },
+                {
+                  label: "Remove Mode",
+                  action: () => {
+                    setShowToolsPopup(false);
+                    enterRemoveMode();
+                  },
+                },
               ].map(({ label, action }) => (
-                <button key={label} className="welcome-popup-select-folders-btn" onClick={action}>{label}</button>
+                <button
+                  key={label}
+                  className="welcome-popup-select-folders-btn"
+                  onClick={action}
+                >
+                  {label}
+                </button>
               ))}
             </div>
             <div className="settings-bottom-bar" style={{ height: 70 }}>
-              <button className="welcome-popup-select-folders-btn welcome-popup-select-folders-btn-margin" onClick={() => setShowToolsPopup(false)}>
+              <button
+                className="welcome-popup-select-folders-btn welcome-popup-select-folders-btn-margin"
+                onClick={() => setShowToolsPopup(false)}
+              >
                 Close
               </button>
             </div>

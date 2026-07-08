@@ -13,6 +13,7 @@ import MapView from "./components/MapView";
 import TagsView from "./components/TagsView";
 import ShuffleView from "./components/ShuffleView";
 import MemoriesView from "./components/MemoriesView";
+import PlacesView from "./components/PlacesView";
 
 const App = () => {
   const [settings, setSettings] = useState(null);
@@ -34,6 +35,8 @@ const App = () => {
     shuffleInterval: 8,
     hideInfo: false,
     smoothTransition: false,
+    chronological: false,
+    ambientMode: false,
   });
   const [explorerScroll, setExplorerScroll] = useState(0);
   const [previewPanelKey, setPreviewPanelKey] = useState(0);
@@ -48,6 +51,8 @@ const App = () => {
     existing: null,
   });
   const [explorerLoading, setExplorerLoading] = useState(false);
+  const ambientModeActive =
+    activeView === "shuffle" && shuffleSettings.ambientMode;
 
   const handleActionPanelApply = (data) => {
     if (
@@ -192,6 +197,16 @@ const App = () => {
     setActionPanelType(null);
   }, [activeView]);
 
+  useEffect(() => {
+    document
+      .querySelector(".App-main")
+      ?.classList.toggle("ambient-mode", ambientModeActive);
+
+    return () => {
+      document.querySelector(".App-main")?.classList.remove("ambient-mode");
+    };
+  }, [ambientModeActive]);
+
   // Check if user has seen Welcome Popup on mount & check username
   useEffect(() => {
     if (settings && settings.welcomePopupSeen === false) {
@@ -293,7 +308,7 @@ const App = () => {
         ids: result.results,
         _smartSearch: true,
         _smartScores: result.scores,
-        _similarTo: item.filename
+        _similarTo: item.filename,
       });
     }
   };
@@ -404,6 +419,16 @@ const App = () => {
                   type: "memory",
                   existing: memory.existing || [],
                 });
+                setActiveView("explore");
+              }}
+            />
+          )}
+          {activeView === "places" && (
+            <PlacesView
+              currentSettings={settings}
+              onViewPlace={(ids) => {
+                setFilters({ ids });
+                setExplorerScroll(0);
                 setActiveView("explore");
               }}
             />

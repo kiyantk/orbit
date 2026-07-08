@@ -501,8 +501,8 @@ const ActionPanel = ({
     }));
 
     queueMicrotask(() => {
-    skipNextApplyRef.current = false;
-  });
+      skipNextApplyRef.current = false;
+    });
   }, [activeFilters?.ids, activeFilters?._similarTo]);
 
   // ── Poll embedding status when search panel is open ───────────────────────
@@ -759,6 +759,7 @@ const ActionPanel = ({
             <option value="name">Name</option>
             <option value="media_id">ID</option>
             <option value="smart">Smart</option>
+            <option value="location">Location</option>
           </select>
 
           {searchBy !== "smart" ? (
@@ -872,6 +873,24 @@ const ActionPanel = ({
                     setShuffleSettings((prev) => ({
                       ...prev,
                       chronological: e.target.checked,
+                    }))
+                  }
+                />
+                <div className="slider round"></div>
+              </label>
+            </div>
+          </div>
+          <div>
+            <label>Ambient Mode: </label>
+            <div className="slider-wrapper">
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={shuffleSettings.ambientMode}
+                  onChange={(e) =>
+                    setShuffleSettings((prev) => ({
+                      ...prev,
+                      ambientMode: e.target.checked,
                     }))
                   }
                 />

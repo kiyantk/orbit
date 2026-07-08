@@ -1,0 +1,254 @@
+﻿country;demonym;id;iso2;population;density;area;gdp;language;driving_side;continent;religion
+China;Chinese;CN;CN;1413142846;147,2;9596960;17963170;Chinese;right;Asia;No Religion
+India;Indian;IN;IN;1399179585;425,6;3287263;3465541;Hindi;left;Asia;Hinduism
+United States;American;US;US;339665118;34,5;9833517;25744100;English;right;North America;Christianity
+Indonesia;Indonesian;ID;ID;279476346;146,7;1904569;1319100;Indonesian;left;Asia;Islam
+Pakistan;Pakistani;PK;PK;247653551;311,1;796095;326796;Urdu;left;Asia;Islam
+Nigeria;Nigerian;NG;NG;230842743;249,9;923768;15414;English;right;Africa;Christianity
+Brazil;Brazilian;BR;BR;218689757;25,7;8515770;1920095;Portuguese;right;South America;Christianity
+Bangladesh;Bangladeshi;BD;BD;167184465;1126,1;148460;432677;Bengali;left;Asia;Islam
+Russia;Russian;RU;RU;141698923;8,3;17098242;2240422;Russian;right;Europe;Christianity
+Mexico;Mexican;MX;MX;129875529;66,1;1964375;1463323;Spanish;right;North America;Christianity
+Japan;Japanese;JP;JP;123719238;327,4;377915;4232173;Japanese;left;Asia;No Religion
+Ethiopia;Ethiopian;ET;ET;116462712;105,5;1104300;118971;Amharic;right;Africa;Christianity
+Philippines;Philippine;PH;PH;116434200;388,1;300000;404284;Filipino;right;Asia;Christianity
+Democratic Republic of the Congo;Congolese;CD;CD;111859928;47,7;2344858;62551;French;right;Africa;Christianity
+Egypt;Egyptian;EG;EG;109546720;109,4;1001450;409306;Arabic;right;Africa;Islam
+Vietnam;Vietnamese;VN;VN;104799174;316,4;331210;408802;Vietnamese;right;Asia;No Religion
+Iran;Iranian;IR;IR;87590873;53,1;1648195;398047;Persian;right;Asia;Islam
+Germany;German;DE;DE;84220184;235,9;357022;4076923;German;right;Europe;Christianity
+Turkey;Turkish;TR;TR;83593483;106,7;783562;907118;Turkish;right;Asia;Islam
+Thailand;Thai;TH;TH;69794997;136;513120;495340;Thai;left;Asia;Buddhism
+France;French;FR;FR;68521974;106,4;643801;2775316;French;right;Europe;Christianity
+United Kingdom;British;GB;GB;68138484;279,7;243610;3089072;English;left;Europe;Christianity
+Tanzania;Tanzanian;TZ;TZ;65642682;69,3;947300;2361;Swahili;left;Africa;Christianity
+Italy;Italian;IT;IT;61021855;202,5;301340;2046952;Italian;right;Europe;Christianity
+South Africa;South African;ZA;ZA;58048332;47,6;1219090;405270;Zulu;left;Africa;Christianity
+Myanmar;Burmese;MM;MM;57970293;85,7;676578;65211;Burmese;right;Asia;Buddhism
+Kenya;Kenyan;KE;KE;57052004;98,3;580367;113419;English;left;Africa;Christianity
+South Korea;South Korean;KR;KR;51966948;521,1;99720;1673916;Korean;right;Asia;No Religion
+Colombia;Colombian;CO;CO;49336454;43,3;1138910;343939;Spanish;right;South America;Christianity
+Sudan;Sudanese;SD;SD;49197555;26,4;1861484;36729;Arabic;right;Africa;Islam
+Uganda;Ugandan;UG;UG;47729952;198;241038;48243;English;left;Africa;Christianity
+Spain;Spanish;ES;ES;47222613;93,4;505370;1415874;Spanish;right;Europe;Christianity
+Argentina;Argentinian;AR;AR;46621847;16,8;2780400;631133;Spanish;right;South America;Christianity
+Algeria;Algerian;DZ;DZ;44758398;18,8;2381740;191912;Arabic;right;Africa;Islam
+Ukraine;Ukrainian;UA;UA;43306477;71,8;603550;160502;Ukrainian;right;Europe;Christianity
+Iraq;Iraqi;IQ;IQ;41266109;94,1;438317;264182;Arabic;right;Asia;Islam
+Afghanistan;Afghan;AF;AF;39232003;60,2;652230;14174;Pashto;right;Asia;Islam
+Canada;Canadian;CA;CA;38516736;3,9;9984670;2137939;English;right;North America;Christianity
+Poland;Polish;PL;PL;37991766;121,5;312685;688125;Polish;right;Europe;Christianity
+Morocco;Moroccan;MA;MA;37067420;51,7;716550;130912;Arabic;right;Africa;Islam
+Angola;Angolan;AO;AO;35981281;28,9;1246700;113304;Portuguese;right;Africa;Christianity
+Saudi Arabia;Saudi Arabian;SA;SA;35939806;16,7;2149690;1108148;Arabic;right;Asia;Islam
+Malaysia;Malaysian;MY;MY;34219975;103,7;329847;406305;Malay;left;Asia;Islam
+Ghana;Ghanaian;GH;GH;33846114;141,9;238533;73766;English;right;Africa;Christianity
+Mozambique;Mozambican;MZ;MZ;32513805;40,7;799380;18406;Portuguese;left;Africa;Christianity
+Peru;Peruvian;PE;PE;32440172;25,2;1285216;242631;Spanish;right;South America;Christianity
+Yemen;Yemeni;YE;YE;31565602;59,8;527968;11007;Arabic;right;Asia;Islam
+Uzbekistan;Uzbekistani;UZ;UZ;31360836;70,1;447400;80391;Uzbek;right;Asia;Islam
+Nepal;Nepalese;NP;NP;30899443;209,9;147181;39406;Nepali;left;Asia;Hinduism
+Venezuela;Venezuelan;VE;VE;30518260;33,5;912050;129313;Spanish;right;South America;Christianity
+Cameroon;Cameroonian;CM;CM;30135732;63,4;475440;44341;English;right;Africa;Christianity
+Ivory Coast;Ivoirian;CI;CI;29344847;91;322463;70018;French;right;Africa;Islam
+Madagascar;Malagasy;MG;MG;28812195;49,1;587041;14954;Malagasy;right;Africa;Christianity
+Australia;Australian;AU;AU;26461166;3,4;7741220;1776577;English;left;Oceania;Christianity
+North Korea;North Korean;KP;KP;26072217;216,3;120538;15176;Korean;right;Asia;No Religion
+Niger;Nigerien;NE;NE;25396840;20;1267000;;French;right;Africa;Islam
+Taiwan;Taiwanese;TW;TW;23588613;655,6;35980;775017;Chinese;right;Asia;Buddhism
+Sri Lanka;Sri Lankan;LK;LK;23326272;355,5;65610;76187;Sinhala;left;Asia;Buddhism
+Syria;Syrian;SY;SY;22933531;122,4;187437;18595;Arabic;right;Asia;Islam
+Burkina Faso;Burkinabe;BF;BF;22489126;82;274200;19176;French;right;Africa;Islam
+Mali;Malian;ML;ML;21359722;17,2;1240192;18827;French;right;Africa;Islam
+Malawi;Malawian;MW;MW;21279597;179,6;118484;12558;English;left;Africa;Christianity
+Zambia;Zambian;ZM;ZM;20216029;26,9;752618;29136;English;left;Africa;Christianity
+Kazakhstan;Kazakhstani;KZ;KZ;19543464;7,2;2724900;225496;Kazakh;right;Asia;Islam
+Chile;Chilean;CL;CL;18549457;24,5;756102;300686;Spanish;right;South America;Christianity
+Chad;Chadian;TD;TD;18523165;14,4;1284000;16799;Arabic;right;Africa;Islam
+Senegal;Senegalese;SN;SN;18384660;93,5;196722;27775;French;right;Africa;Islam
+Romania;Romanian;RO;RO;18326327;76,9;238391;300690;Romanian;right;Europe;Christianity
+Guatemala;Guatemalan;GT;GT;17980803;165,1;108889;95003;Spanish;right;North America;Christianity
+Ecuador;Ecuadorian;EC;EC;17483326;61,7;283561;115049;Spanish;right;South America;Christianity
+Netherlands;Dutch;NL;NL;17463930;420,4;41543;1572;Dutch;right;Europe;Christianity
+Cambodia;Cambodian;KH;KH;16891245;93,3;181035;29504;Khmer;right;Asia;Buddhism
+Zimbabwe;Zimbabwean;ZW;ZW;15418674;39,5;390757;26418;English;left;Africa;Christianity
+Benin;Beninese;BJ;BJ;14219908;126,3;112622;17396;French;right;Africa;Christianity
+Guinea;Guinean;GN;GN;13607249;55,3;245857;20846;French;right;Africa;Islam
+Rwanda;Rwandese;RW;RW;13400541;508,8;26338;13312;Kinyarwanda;right;Africa;Christianity
+Burundi;Burundian;BI;BI;13162952;473;27830;4032;Kirundi;right;Africa;Christianity
+Somalia;Somalian;SO;SO;12693796;19,9;637657;10420;Somali;right;Africa;Islam
+Bolivia;Bolivian;BO;BO;12186079;11,1;1098581;44008;Spanish;right;South America;Christianity
+South Sudan;South Sudanese;SS;SS;12118379;18,8;644329;4616;Arabic;right;Africa;Christianity
+Tunisia;Tunisian;TN;TN;11976182;73,2;163610;46181;Arabic;right;Africa;Islam
+Belgium;Belgian;BE;BE;11913633;390,3;30528;582643;Dutch;right;Europe;Christianity
+Haiti;Haitian;HT;HT;11470261;413,3;27750;18751;French;right;North America;Christianity
+Jordan;Jordanian;JO;JO;11086716;124,1;89342;47452;Arabic;right;Asia;Islam
+Cuba;Cuban;CU;CU;10985974;99,1;110860;147193;Spanish;right;North America;Christianity
+Dominican Republic;Dominican;DO;DO;10790744;221,7;48670;113537;Spanish;right;North America;Christianity
+Czech Republic;Czech;CZ;CZ;10706242;135,8;78867;290527;Czech;right;Europe;No Religion
+Sweden;Swedish;SE;SE;10536338;23,4;450295;591188;Swedish;right;Europe;No Religion
+Greece;Greek;GR;GR;10497595;79,6;131957;217285;Greek;right;Europe;Christianity
+Azerbaijan;Azerbaijani;AZ;AZ;10420515;120,3;86600;78721;Azerbaijani;right;Asia;Islam
+Portugal;Portuguese;PT;PT;10223150;111;92090;254849;Portuguese;right;Europe;Christianity
+United Arab Emirates;Emirati;AE;AE;9973449;119,3;83600;507063;Arabic;right;Asia;Islam
+Papua New Guinea;Papua New Guinean;PG;PG;9819350;21,2;462840;31609;English;left;Oceania;Christianity
+Hungary;Hungarian;HU;HU;9670009;103,9;93028;177337;Hungarian;right;Europe;Christianity
+Honduras;Catracho;HN;HN;9571352;85,4;112090;31717;Spanish;right;North America;Christianity
+Belarus;Belarusian;BY;BY;9383853;45,2;207600;72873;Belarusian;right;Europe;Christianity
+Tajikistan;Tajikistani;TJ;TJ;9245937;64,2;144100;10492;Tajik;right;Asia;Islam
+Israel;Israeli;IL;IL;9043387;412,2;21937;525002;Hebrew;right;Asia;Judaism
+Austria;Austrian;AT;AT;8940860;106,6;83871;470302;German;right;Europe;Christianity
+Sierra Leone;Sierra Leonean;SL;SL;8908040;124,2;71740;3481;English;right;Africa;Islam
+Togo;Togolese;TG;TG;8703961;153,3;56785;8087;French;right;Africa;Christianity
+Switzerland;Swiss;CH;CH;8563760;207,5;41277;818426;German;right;Europe;Christianity
+Laos;Laotian;LA;LA;7852377;33,2;236800;15362;Lao;right;Asia;Buddhism
+Paraguay;Paraguayan;PY;PY;7439863;18,3;406752;41722;Spanish;right;South America;Christianity
+Hong Kong;Hong Konger;HK;HK;7288167;6577,8;1108;359838;Chinese;left;Asia;No Religion
+Libya;Libyan;LY;LY;7252573;4,1;1759540;40537;Arabic;right;Africa;Islam
+Bulgaria;Bulgarian;BG;BG;6827736;61,6;110879;90213;Bulgarian;right;Europe;Christianity
+Serbia;Serbian;RS;RS;6693375;86,4;77474;9397;Serbian;right;Europe;Christianity
+El Salvador;Salvadoran;SV;SV;6602370;313,8;21041;32488;Spanish;right;North America;Christianity
+Nicaragua;Nicaraguan;NI;NI;6359689;48,8;130370;15671;Spanish;right;North America;Christianity
+Eritrea;Eritrean;ER;ER;6274796;53,4;117600;2383;Tigrinya;right;Africa;Islam
+Kyrgyzstan;Kyrgyzstani;KG;KG;6122781;30,6;199951;12560;Kyrgyz;right;Asia;Islam
+Singapore;Singaporean;SG;SG;5975383;8310,7;719;466788;English;left;Asia;Buddhism
+Denmark;Danish;DK;DK;5946984;138;43094;400167;Danish;right;Europe;No Religion
+Turkmenistan;Turkmenistani;TM;TM;5690818;11,7;488100;67009;Turkmen;right;Asia;Islam
+Republic of the Congo;Congolese;CG;CG;5677493;16,6;342000;15344;French;right;Africa;Christianity
+Finland;Finnish;FI;FI;5614571;16,6;338145;282511;Finnish;right;Europe;Christianity
+Norway;Norwegian;NO;NO;5597924;17,3;323802;579422;Norwegian;right;Europe;No Religion
+Central African Republic;Central African;CF;CF;5552228;8,9;622984;2395;Sango;right;Africa;Christianity
+Liberia;Liberian;LR;LR;5506280;49,4;111369;3265;English;right;Africa;Christianity
+Slovakia;Slovak;SK;SK;5425319;110,6;49035;115304;Slovak;right;Europe;Christianity
+Lebanon;Lebanese;LB;LB;5331203;512,6;10400;39303;Arabic;right;Asia;Islam
+Ireland;Irish;IE;IE;5323991;75,8;70273;532415;English;left;Europe;Christianity
+Costa Rica;Costa Rican;CR;CR;5256612;102,9;51100;68380;Spanish;right;North America;Christianity
+New Zealand;New Zealander;NZ;NZ;5109702;19;268838;245845;English;left;Oceania;Christianity
+Georgia;Georgian;GE;GE;4927228;70,7;69700;24605;Georgian;right;Asia;Christianity
+Panama;Panamanian;PA;PA;4404108;58,4;75420;76522;Spanish;right;North America;Christianity
+Mauritania;Mauritanian;MR;MR;4244878;4,1;1030700;10997;Arabic;right;Africa;Islam
+Croatia;Croatian;HR;HR;4169239;73,7;56594;71552;Croatian;right;Europe;Christianity
+Oman;Omani;OM;OM;3833465;12,4;309500;114666;Arabic;right;Asia;Islam
+Bosnia and Herzegovina;Herzegovinian;BA;BA;3807764;74,4;51197;24473;Bosnian;right;Europe;Islam
+Uruguay;Uruguayan;UY;UY;3416264;19,4;176215;71171;Spanish;right;South America;Christianity
+Mongolia;Mongolian;MN;MN;3255468;2,1;1564116;17146;Mongolian;right;Asia;Buddhism
+Moldova;Moldavian;MD;MD;3250532;96;33851;14510;Romanian;right;Europe;Christianity
+Kuwait;Kuwaiti;KW;KW;3103580;174,2;17818;175363;Arabic;right;Asia;Islam
+Albania;Albanian;AL;AL;3101621;107,9;28748;18916;Albanian;right;Europe;Islam
+Puerto Rico;Puerto Rican;PR;PR;3057311;335,8;9104;113434;Spanish;right;North America;Christianity
+Armenia;Armenian;AM;AM;2989091;100,5;29743;19513;Armenian;right;Asia;Christianity
+West Bank;West Banker;XW;PS;2949246;521,5;5655;;;right;Asia;Islam
+Jamaica;Jamaican;JM;JM;2820982;256,7;10991;17097;English;left;North America;Christianity
+Namibia;Namibian;NA;NA;2777232;3,4;824292;12607;English;left;Africa;
+Lithuania;Lithuanian;LT;LT;2655755;40,7;65300;70878;Lithuanian;right;Europe;Christianity
+Qatar;Qatari;QA;QA;2532104;218,5;11586;237101;Arabic;right;Asia;Islam
+The Gambia;Gambian;GM;GM;2468569;218,5;11300;2231;English;right;Africa;Islam
+Botswana;Botswanan;BW;BW;2417596;4,2;581730;20352;English;left;Africa;Christianity
+Gabon;Gabonese;GA;GA;2397368;9;267667;20132;French;right;Africa;Christianity
+Lesotho;Basotho;LS;LS;2210646;72,8;30355;2287;English;left;Africa;Christianity
+North Macedonia;Macedonian;MK;MK;2133410;83;25713;13711;Macedonian;right;Europe;Christianity
+Slovenia;Slovenian;SI;SI;2099790;103,6;20273;59981;Slovenian;right;Europe;Christianity
+Guinea-Bissau;Guinea-Bissauan;GW;GW;2078820;57,5;36125;1574;Portuguese;right;Africa;Islam
+Kosovo;Kosovan;XK;XK;1964327;180,4;10887;;Serbian;right;Europe;Islam
+Latvia;Latvian;LV;LV;1821750;28,2;64589;40876;Latvian;right;Europe;Christianity
+Equatorial Guinea;Equatorial Guinean;GQ;GQ;1737695;61,9;28051;11767;Spanish;right;Africa;Christianity
+Bahrain;Bahraini;BH;BH;1553886;2044,6;760;44382;Arabic;right;Asia;Islam
+Timor-Leste;East Timorese;TL;TL;1476042;99,2;14874;3204;Portuguese;left;Asia;Christianity
+Trinidad and Tobago;Trinidadian;TT;TT;1407460;274,5;5128;30053;English;left;North America;Christianity
+Mauritius;Mauritian;MU;MU;1309448;641,9;2040;12898;English;left;Seven seas (open ocean);Hinduism
+Cyprus;Cypriot;CY;CY;1308120;141,4;9251;29210;Greek;left;Asia;Christianity
+Estonia;Estonian;EE;EE;1202762;26,6;45228;38049;Estonian;right;Europe;No Religion
+Eswatini;liSwati;SZ;SZ;1130043;65,1;17364;4326;English;left;Africa;Christianity
+Djibouti;Djiboutian;DJ;DJ;976143;42,1;23200;4003;Arabic;right;Africa;Islam
+Fiji;Fijian;FJ;FJ;947760;51,9;18274;4979;English;left;Oceania;Christianity
+Comoros;Comorian;KM;KM;888378;397,5;2235;1246;Arabic;right;Africa;Islam
+Bhutan;Bhutanese;BT;BT;876181;22,8;38394;2898;Dzongkha;left;Asia;Buddhism
+Guyana;Guyanese;GY;GY;791739;3,7;214969;14718;English;left;South America;Christianity
+Solomon Islands;Solomon Islander;SB;SB;714766;24,7;28896;1597;English;left;Oceania;Christianity
+Luxembourg;Luxembourgian;LU;LU;660924;255,6;2586;81530;Luxembourgish;right;Europe;Christianity
+Macau;Macanese;MO;MO;639971;22856,1;28;24042;Chinese;left;Asia;Buddhism
+Suriname;Surinamese;SR;SR;639759;3,9;163820;3620;Dutch;left;South America;Christianity
+Cape Verde;Cabo Verdean;CV;CV;603901;149,7;4033;2314;Portuguese;right;Africa;Christianity
+Montenegro;Montenegrin;ME;ME;602445;43,6;13812;6229;Montenegrin;right;Europe;Christianity
+Western Sahara;Sahrawi;EH;EH;565581;2,1;272000;;Arabic;right;Africa;Islam
+Maldives;Maldivian;MV;MV;521021;1748,4;298;6170;Divehi;left;Seven seas (open ocean);Islam
+Brunei;Brunei;BN;BN;484991;84,1;5765;16681;Malay;left;Asia;Islam
+Malta;Maltese;MT;MT;467138;1478,3;316;18100;Maltese;left;Europe;Christianity
+Belize;Belizean;BZ;BZ;419137;18,3;22966;2830;English;right;North America;Christianity
+Guadeloupe;Guadeloupean;GP;GP;378561;232,5;1628;9462;French;right;North America;Christianity
+Iceland;Icelander;IS;IS;360872;3,5;103000;28064;Icelandic;right;Europe;Christianity
+The Bahamas;Bahamian;BS;BS;358508;25,8;13880;12897;English;left;North America;Christianity
+Vanuatu;Ni-Vanuatu;VU;VU;313046;25,7;12189;985;Bislama;right;Oceania;Christianity
+Barbados;Barbadian;BB;BB;303431;705,7;430;5699;English;left;North America;Christianity
+French Polynesia;French Polynesian;PF;PF;301488;72,4;4167;5814;French;right;Oceania;Christianity
+New Caledonia;New Caledonian;NC;NC;300682;16,2;18575;9623;French;right;Oceania;Christianity
+São Tomé and Príncipe;Sao Tomean;ST;ST;220372;228,6;964;546;Portuguese;right;Africa;Christianity
+Samoa;Samoan;WS;WS;207501;73,3;2831;857;Samoan;left;Oceania;Christianity
+Guam;Guamanian;GU;GU;169330;311,3;544;;English;right;Oceania;Christianity
+Saint Lucia;Saint Lucian;LC;LC;167591;272,1;616;2165;English;left;North America;Christianity
+Curaçao;Curaçaoan;CW;CW;152849;344,3;444;;English;right;North America;Christianity
+Aruba;Aruban;AW;AW;123702;687,2;180;3544;Dutch;right;North America;Christianity
+Kiribati;I-Kiribati;KI;KI;115372;142,3;811;223;English;left;Oceania;Christianity
+Grenada;Grenadian;GD;GD;114299;332,3;344;1192;English;left;North America;Christianity
+Tonga;Tongan;TO;TO;105221;140,9;747;488;English;left;Oceania;Christianity
+United States Virgin Islands;Virgin Islander;VI;VI;104917;54,9;1910;;English;left;North America;Christianity
+Jersey;Jersey People;JE;JE;102785;886,1;116;;English;left;Europe;Christianity
+Antigua and Barbuda;Antigua and Barbuda;AG;AG;101489;229,1;443;1770;English;left;North America;Christianity
+Saint Vincent and the Grenadines;Saint Vincentian;VC;VC;100804;259,1;389;946;English;left;North America;Christianity
+Federated States of Micronesia;Micronesian;FM;FM;100319;142,9;702;427;English;right;Oceania;Christianity
+Seychelles;Seychelloise;SC;SC;97617;214,5;455;1994;English;left;Seven seas (open ocean);Christianity
+Isle of Man;Manx;IM;IM;91840;160,6;572;;Manx;left;Europe;Christianity
+Andorra;Andorran;AD;AD;85468;182,6;468;3376;Catalan;right;Europe;Christianity
+Marshall Islands;Marshallese;MH;MH;80966;447,3;181;279;English;right;Oceania;Christianity
+Dominica;Dominican;DM;DM;74656;99,4;751;612;English;left;North America;Christianity
+Bermuda;Bermudian;BM;BM;72576;1344;54;7546;English;left;North America;Christianity
+Guernsey;Guernsey;GG;GG;67642;867,2;78;;English;left;Europe;Christianity
+Cayman Islands;Caymanian;KY;KY;65483;248;264;6281;English;left;North America;Christianity
+Turks and Caicos Islands;Turks and Caicos Islander;TC;TC;59367;62,6;948;1138;English;left;North America;Christianity
+Greenland;Greenlandic;GL;GL;57777;0;2166086;2926;Greenlandic;right;North America;Christianity
+Saint Kitts and Nevis;Kittitian;KN;KN;54817;210;261;979;English;left;North America;Christianity
+Faroe Islands;Faroe Islander;FO;FO;52600;37,8;1393;;Faroese;right;Europe;Christianity
+Northern Mariana Islands;Northern Mariana Islander;MP;MP;51295;110,5;464;;English;right;Oceania;Christianity
+Sint Maarten;St. Maartener;SX;SX;45677;1343,4;34;;English;right;North America;Christianity
+American Samoa;American Samoan;AS;AS;44620;199,2;224;709;English;right;Oceania;Christianity
+Liechtenstein;Liechtensteiner;LI;LI;39993;250;160;7757;German;right;Europe;Christianity
+British Virgin Islands;British Virgin Islander;VG;VG;39369;260,7;151;;English;left;North America;Christianity
+San Marino;Sammarinese;SM;SM;34892;572;61;1780;Italian;right;Europe;Christianity
+Saint-Martin;Saint-Martinoi;MF;MF;32897;657,9;50;;French;right;North America;Christianity
+Monaco;Monegasque;MC;MC;31597;15798,5;2;8772;French;right;Europe;Christianity
+Caribbean Netherlands;Dutch Caribbean;BQ;BQ;30397;;;725;English;right;North America;Christianity
+Gibraltar;Gibraltarian;GI;GI;29629;4232,7;7;;English;right;Europe;Christianity
+Palau;Palauan;PW;PW;21779;47,4;459;225;English;right;Oceania;Christianity
+Anguilla;Anguillan;AI;AI;19079;209,7;91;;English;left;North America;Christianity
+Wallis and Futuna;Wallisian;WF;WF;15929;112,2;142;;French;right;Oceania;Christianity
+Tuvalu;Tuvaluan;TV;TV;11639;447,7;26;59;English;left;Oceania;Christianity
+Nauru;Nauruan;NR;NR;9852;469,1;21;147;Nauruan;left;Oceania;Christianity
+Cook Islands;Cook Islander;CK;CK;7939;33,6;236;;English;left;Oceania;Christianity
+Saint Helena, Ascension and Tristan da Cunha;Ascension Islander;SH;SH;7935;20,1;394;;English;left;Seven seas (open ocean);Christianity
+Saint Barthélemy;Saint-Barth;BL;BL;7093;283,7;25;;French;right;North America;Christianity
+Montserrat;Montserratian;MS;MS;5440;53,3;102;;English;left;North America;Christianity
+Saint Pierre and Miquelon;Saint-Pierrai;PM;PM;5195;21,5;242;;French;right;North America;Christianity
+Falkland Islands;Falkland Islander;FK;FK;3662;0,3;12173;;English;left;South America;Christianity
+Svalbard and Jan Mayen;Svalbardian;SJ;SJ;2926;0;62045;;Norwegian;right;Europe;Christianity
+Christmas Island;Christmas Islander;CX;CX;2205;16,3;135;;English;left;Asia;Buddhism
+Niue;Niuean;NU;NU;2000;7,7;260;;English;left;Oceania;Christianity
+Norfolk Island;Norfolk Islander;NF;NF;1748;48,6;36;;English;left;Oceania;Christianity
+Tokelau;Tokelauan;TK;TK;1647;137,3;12;;English;left;Insular Oceania;Christianity
+Vatican City;Vatican;VA;VA;1000;;0;;Italian;right;Europe;Christianity
+Cocos (Keeling) Islands;Cocos Islander;CC;CC;596;42,6;14;;English;left;Oceania;Islam
+United States Minor Outlying Islands;;UM;UM;300;6,1;49,26;;English;right;North America;Christianity
+Pitcairn Islands;Pitcairn Islander;PN;PN;50;1,1;47;;English;left;Oceania;Christianity
+Akrotiri;;QZ;;;;;;;left;;Christianity
+British Indian Ocean Territory;;IO;IO;;;60;;English;right;Seven seas (open ocean);Islam
+Dhekelia;;XD;;;;;;;left;;Christianity
+French Guiana;French Guianese;GF;GF;;;;;French;right;South America;Christianity
+French Southern and Antarctic Lands;;TF;TF;;;;;French;right;Seven seas (open ocean);
+Gaza Strip;Gazan;XG;PS;;;;;;right;Asia;Islam
+Martinique;Martiniquai;MQ;MQ;;;;;French;right;North America;Christianity
+Mayotte;Mahoran ;YT;YT;;;;;French;right;Africa;Islam
+Paracel Islands;;XP;;;;;;;right;;
+Réunion;Reunion;RE;RE;;;;;French;right;Africa;Christianity
+South Georgia and the South Sandwich Islands;South Sandwich Islander;GS;GS;;;;;English;left;Seven seas (open ocean);
+Heard Island and McDonald Islands;;HM;HM;;;412;;;left;Seven seas (open ocean);
+Bouvet Island;;BV;BV;;;49;;;right;Antarctica;
+Antarctica;;AQ;AQ;;;14200000;;;;Antarctica;No Religion

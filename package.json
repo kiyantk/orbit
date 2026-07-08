@@ -18,6 +18,7 @@
     "chartjs-plugin-zoom": "^2.2.0",
     "concurrently": "^9.2.1",
     "coordinate_to_country": "^1.1.0",
+    "csv-parse": "^7.0.0",
     "dcraw": "^1.0.3",
     "exiftool-vendored": "^30.4.0",
     "ffmpeg-static": "^5.2.0",
