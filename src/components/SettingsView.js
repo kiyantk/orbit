@@ -127,6 +127,76 @@ const ConfirmPopup = ({ message, subMessage, onConfirm, onCancel }) => (
   </div>
 );
 
+// ─── Backup Popup ─────────────────────────────────────────────────────────
+const BackupPopup = ({
+  preview,
+  filename,
+  onFilenameChange,
+  onCreate,
+  onClose,
+  isCreating,
+  status,
+}) => (
+  <div className="welcome-popup-overlay">
+    <div className="confirm-popup" style={{ maxWidth: 480 }}>
+      <div className="welcome-popup-top">
+        <div className="welcome-popup-inline">
+          <h2>Create Backup</h2>
+        </div>
+      </div>
+      <div className="welcome-popup-content">
+        <SettingsRow>
+          <span>Filename:</span>
+          <input
+            className="settings-content-input"
+            type="text"
+            value={filename}
+            onChange={(e) => onFilenameChange(e.target.value)}
+            disabled={isCreating}
+          />
+        </SettingsRow>
+        <SettingsRow>
+          <span>Uncompressed size:</span>
+          <span>
+            {preview ? `~${formatBytes(preview.totalSize)}` : "Calculating…"}
+          </span>
+        </SettingsRow>
+        <span className="settings-hint">
+          Backs up config.json and orbit-index.db. Thumbnails are not included.
+          The actual zip may be smaller due to compression.
+        </span>
+        {status && (
+          <div
+            style={{
+              marginTop: 10,
+              color: status.type === "error" ? "#ff9a9a" : "#8ee6a0",
+            }}
+          >
+            {status.message}
+          </div>
+        )}
+      </div>
+      <div className="settings-bottom-bar" style={{ gap: 8 }}>
+        <button
+          className="settings-cancel-btn"
+          style={{ backgroundColor: "#2d2a35" }}
+          onClick={onClose}
+          disabled={isCreating}
+        >
+          Close
+        </button>
+        <button
+          className="settings-save-btn"
+          onClick={onCreate}
+          disabled={isCreating || !filename.trim()}
+        >
+          {isCreating ? "Creating…" : "Create Backup"}
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
 // ─── Smart Search Status Panel ────────────────────────────────────────────────
 const SmartSearchStatus = () => {
   const [status, setStatus] = useState({
@@ -269,6 +339,12 @@ const SettingsView = ({
   const [showToolsPopup, setShowToolsPopup] = useState(false);
   const [isFetchingUsage, setIsFetchingUsage] = useState(false);
   const [storageUsage, setStorageUsage] = useState(null);
+
+  const [showBackupPopup, setShowBackupPopup] = useState(false);
+  const [backupPreview, setBackupPreview] = useState(null);
+  const [backupFilename, setBackupFilename] = useState("");
+  const [isCreatingBackup, setIsCreatingBackup] = useState(false);
+  const [backupStatus, setBackupStatus] = useState(null);
 
   const [confirmPopup, setConfirmPopup] = useState(null);
 
@@ -545,6 +621,48 @@ const SettingsView = ({
     } finally {
       setIsFetchingUsage(false);
     }
+  };
+
+  const openBackupPopup = async () => {
+    setShowBackupPopup(true);
+    setBackupStatus(null);
+    setBackupPreview(null);
+    try {
+      const preview = await ipc("get-backup-preview");
+      if (preview.success) {
+        setBackupPreview(preview);
+        setBackupFilename(preview.defaultFilename);
+      } else {
+        setBackupStatus({ type: "error", message: preview.error });
+      }
+    } catch (err) {
+      console.error("Error fetching backup preview:", err);
+      setBackupStatus({ type: "error", message: err.message });
+    }
+  };
+
+  const handleCreateBackup = async () => {
+    setIsCreatingBackup(true);
+    setBackupStatus(null);
+    try {
+      const result = await ipc("create-backup", backupFilename);
+      if (result.canceled) {
+        // user dismissed the save dialog — leave popup open, no message
+      } else if (result.success) {
+        setBackupStatus({
+          type: "success",
+          message: `Backup saved to ${result.filePath}`,
+        });
+      } else {
+        setBackupStatus({
+          type: "error",
+          message: result.error || "Failed to create backup",
+        });
+      }
+    } catch (err) {
+      setBackupStatus({ type: "error", message: err.message });
+    }
+    setIsCreatingBackup(false);
   };
 
   const openAppLocation = () => ipc("open-orbit-location");
@@ -918,6 +1036,30 @@ const SettingsView = ({
           {selectedTab === "Storage" && (
             <div>
               <SettingsRow>
+                <button
+                  className="settings-normal-button"
+                  onClick={openAppLocation}
+                >
+                  Open app folder
+                </button>
+              </SettingsRow>
+              <SettingsRow>
+                <button
+                  className="settings-normal-button"
+                  onClick={openDataLocation}
+                >
+                  Open data folder
+                </button>
+              </SettingsRow>
+              <SettingsRow>
+                <button
+                  className="settings-normal-button"
+                  onClick={openBackupPopup}
+                >
+                  Create Backup
+                </button>
+              </SettingsRow>
+              <SettingsRow>
                 <span>Storage usage:</span>
                 <button
                   className="settings-normal-button"
@@ -1180,22 +1322,6 @@ const SettingsView = ({
               <SettingsRow>
                 <button
                   className="settings-normal-button"
-                  onClick={openAppLocation}
-                >
-                  Open app directory
-                </button>
-              </SettingsRow>
-              <SettingsRow>
-                <button
-                  className="settings-normal-button"
-                  onClick={openDataLocation}
-                >
-                  Open data directory
-                </button>
-              </SettingsRow>
-              <SettingsRow>
-                <button
-                  className="settings-normal-button"
                   onClick={toggleFullscreen}
                 >
                   Toggle Fullscreen
@@ -1216,7 +1342,9 @@ const SettingsView = ({
       {showToolsPopup && (
         <div className="welcome-popup-overlay">
           <div className="welcome-popup">
-            <h2>Tools</h2>
+            <div className="welcome-popup-top">
+              <h2>Tools</h2>
+            </div>
             <p>Select which tool to run:</p>
             <div className="tools-popup-content">
               {[
@@ -1297,6 +1425,18 @@ const SettingsView = ({
           subMessage={confirmPopup.subMessage}
           onConfirm={confirmPopup.onConfirm}
           onCancel={() => setConfirmPopup(null)}
+        />
+      )}
+
+      {showBackupPopup && (
+        <BackupPopup
+          preview={backupPreview}
+          filename={backupFilename}
+          onFilenameChange={setBackupFilename}
+          onCreate={handleCreateBackup}
+          onClose={() => setShowBackupPopup(false)}
+          isCreating={isCreatingBackup}
+          status={backupStatus}
         />
       )}
     </div>

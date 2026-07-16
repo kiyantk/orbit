@@ -674,6 +674,7 @@ const ActionPanel = ({
 
   return (
     <div className="action-panel">
+      <div className="action-panel-content">
       {type === "sort" && (
         <div className="sort-panel">
           <label>Sort by:</label>
@@ -910,6 +911,7 @@ const ActionPanel = ({
           onReset={map.resetFilters}
         />
       )}
+      </div>
     </div>
   );
 };

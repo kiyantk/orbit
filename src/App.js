@@ -255,9 +255,17 @@ const App = () => {
 
   const handleExplorerSelect = (item, type) => {
     setSelectedItem(item);
+  
+    if (!item) {
+      setSelectedItemAvailable(false);
+      setForceFullscreen(false);
+      return;
+    }
+  
     setSelectedItemAvailable(folderStatuses[item.folder_path] ?? true);
+  
     if (type === "double") {
-      setForceFullscreen(true); // tell PreviewPanel to open fullscreen
+      setForceFullscreen(true);
     } else {
       setForceFullscreen(false);
     }

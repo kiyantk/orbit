@@ -988,7 +988,10 @@ useEffect(() => {
       });
       idToIndex.current = rebuilt;
 
-      if (idList.includes(selectedItem?.id)) setSelectedItem(null);
+      if (idList.includes(selectedItem?.id)) {
+        setSelectedItem(null);
+        onSelect(null, "single");
+      }
       itemDeleted();
     };
 
@@ -1027,6 +1030,13 @@ useEffect(() => {
         return;
       }
 
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSelectedItem(null);
+        onSelect(null, "single");
+        return;
+      }
+      
       if (!selectedItem) return;
       const idx = idToIndex.current.get(selectedItem.id);
       if (idx == null) return;

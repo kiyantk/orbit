@@ -34,6 +34,7 @@ const StatsView = ({ birthDate }) => {
   const [activeTab, setActiveTab] = useState("overview");
   const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
   const [loading, setLoading] = useState(true);
+  const [milestones, setMilestones] = useState(null);
 
   const handleChangeYear = useCallback((offset) => {
     setCalendarYear((prev) => prev + offset);
@@ -55,6 +56,19 @@ const StatsView = ({ birthDate }) => {
     };
     fetchStats();
   }, [birthDate]);
+
+  useEffect(() => {
+    const fetchMilestones = async () => {
+      try {
+        const res =
+          await window.electron.ipcRenderer.invoke("fetch-milestones");
+        if (res.success) setMilestones(res);
+      } catch (err) {
+        console.error("Failed to fetch milestones", err);
+      }
+    };
+    fetchMilestones();
+  }, []);
 
   // Derive calendar data and streaks from the lightweight allDays array
   const calendarData = useMemo(() => {
@@ -116,6 +130,17 @@ const StatsView = ({ birthDate }) => {
   };
 
   const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+  const formatMilestoneDate = (dateStr) => {
+    if (!dateStr) return "—";
+    const d = new Date(dateStr.replace(" ", "T"));
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  };
 
   const toChartData = (data, xKey, color = "#775ae4") => {
     const isNumeric = xKey === "year" || xKey === "age";
@@ -245,8 +270,8 @@ const StatsView = ({ birthDate }) => {
     });
     return (
       <div className="stats-card-wrapper">
+        <h3>{title}</h3>
         <div className="stats-card">
-          <h3>{title}</h3>
           <table>
             <thead>
               <tr>
@@ -255,19 +280,24 @@ const StatsView = ({ birthDate }) => {
                 <th>{capitalize(key2)}</th>
               </tr>
             </thead>
-            <tbody>
-              {sortedData.map((item, idx) => (
-                <tr
-                  key={idx}
-                  className={item[key1] === "Unknown" ? "unknown-row" : ""}
-                >
-                  <td>{item[key1]}</td>
-                  {key3 && <td>{item[key3]}</td>}
-                  <td>{item[key2]}</td>
-                </tr>
-              ))}
-            </tbody>
           </table>
+
+          <div className="stats-card-body">
+            <table>
+              <tbody>
+                {sortedData.map((item, idx) => (
+                  <tr
+                    key={idx}
+                    className={item[key1] === "Unknown" ? "unknown-row" : ""}
+                  >
+                    <td>{item[key1]}</td>
+                    {key3 && <td>{item[key3]}</td>}
+                    <td>{item[key2]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     );
@@ -281,6 +311,7 @@ const StatsView = ({ birthDate }) => {
           { id: "calendar", label: "Calendar" },
           { id: "sources", label: "Sources" },
           { id: "charts", label: "Charts" },
+          { id: "milestones", label: "Milestones" },
         ].map((tab) => (
           <div
             key={tab.id}
@@ -379,10 +410,10 @@ const StatsView = ({ birthDate }) => {
           </div>
         )}
         {activeTab === "sources" && (
-          <div className="stats-grid">
+          <div className="stats-grid-vertical">
             <div className="stats-card-wrapper">
+              <h3>Devices</h3>
               <div className="stats-card">
-                <h3>Devices</h3>
                 <table>
                   <thead>
                     <tr>
@@ -392,22 +423,28 @@ const StatsView = ({ birthDate }) => {
                       <th>Count</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {stats.devices.map((s, idx) => (
-                      <tr key={idx}>
-                        <td>{s.device}</td>
-                        <td>{s.first}</td>
-                        <td>{s.last}</td>
-                        <td>{s.count}</td>
-                      </tr>
-                    ))}
-                  </tbody>
                 </table>
+
+                <div className="stats-card-body">
+                  <table>
+                    <tbody>
+                      {stats.devices.map((s, idx) => (
+                        <tr key={idx}>
+                          <td>{s.device}</td>
+                          <td>{s.first}</td>
+                          <td>{s.last}</td>
+                          <td>{s.count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
+
             <div className="stats-card-wrapper">
+              <h3>Sources</h3>
               <div className="stats-card">
-                <h3>Sources</h3>
                 <table>
                   <thead>
                     <tr>
@@ -417,17 +454,22 @@ const StatsView = ({ birthDate }) => {
                       <th>Count</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {stats.sources.map((s, idx) => (
-                      <tr key={idx}>
-                        <td>{s.folder}</td>
-                        <td>{s.first}</td>
-                        <td>{s.last}</td>
-                        <td>{s.count}</td>
-                      </tr>
-                    ))}
-                  </tbody>
                 </table>
+
+                <div className="stats-card-body">
+                  <table>
+                    <tbody>
+                      {stats.sources.map((s, idx) => (
+                        <tr key={idx}>
+                          <td>{s.folder}</td>
+                          <td>{s.first}</td>
+                          <td>{s.last}</td>
+                          <td>{s.count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
@@ -470,7 +512,7 @@ const StatsView = ({ birthDate }) => {
 
               return (
                 <div className="stats-card-wrapper" key={title}>
-                  <div className="stats-card">
+                  <div className="stats-card stats-card-chart">
                     <h3>{title}</h3>
                     <Chart
                       data={toChartData(preparedData, xKey)}
@@ -480,6 +522,54 @@ const StatsView = ({ birthDate }) => {
                 </div>
               );
             })}
+          </div>
+        )}
+        {activeTab === "milestones" && (
+          <div className="stats-card-wrapper">
+            <h3>Milestones</h3>
+
+            <div className="stats-card">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Milestone</th>
+                    <th>Date</th>
+                  </tr>
+                </thead>
+              </table>
+
+              <div className="stats-card-body">
+                <table>
+                  <tbody>
+                    <tr className="group-header">
+                      <th colSpan="2">Achieved</th>
+                    </tr>
+
+                    {milestones?.achieved?.map((m) => (
+                      <tr key={`achieved-${m.milestone}`}>
+                        <td>{m.milestone.toLocaleString()}</td>
+                        <td>{formatMilestoneDate(m.date)}</td>
+                      </tr>
+                    ))}
+
+                    <tr className="group-header">
+                      <th colSpan="2">Upcoming</th>
+                    </tr>
+
+                    {milestones?.upcoming?.map((m) => (
+                      <tr key={`upcoming-${m.milestone}`}>
+                        <td>{m.milestone.toLocaleString()}</td>
+                        <td>
+                          {m.unavailable
+                            ? "Prediction unavailable"
+                            : `≈ ${formatMilestoneDate(m.predictedDate)}`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
       </div>

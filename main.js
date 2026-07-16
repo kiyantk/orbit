@@ -22,6 +22,7 @@ const EmbeddingService = require("./embedding-service");
 const LocationService  = require("./location-service");
 const crypto = require("crypto");
 const { parse } = require("csv-parse/sync");
+const AdmZip = require("adm-zip");
 let embeddingService = null;
 let _textPipeline = null;
 let locationService  = null;
@@ -52,6 +53,24 @@ for (const row of parse(countriesCsv, {
   if (!code) continue;
 
   countryPopulationMap[code] = Number(row.population) || 0;
+}
+
+const gotLock = app.requestSingleInstanceLock();
+
+if (!gotLock) {
+  app.whenReady().then(async () => {
+    await dialog.showMessageBox({
+      type: "info",
+      title: "Orbit",
+      message: "Orbit is already running.",
+      detail:
+        "Another instance of Orbit is already open.",
+    });
+
+    app.quit();
+  });
+
+  return;
 }
 
 // On startup:
@@ -357,12 +376,37 @@ app.whenReady().then(() => {
     }
   });
 
-  appServer.listen(serverPort, () => {
-    console.log(`Local file server running on http://localhost:${serverPort}`);
-  });
+  const server = appServer.listen(serverPort);
 
-  mainWindow.loadURL("http://localhost:3000");
-  // mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  server.once("listening", () => {
+    console.log(`Local file server running on http://localhost:${serverPort}`);
+  
+    // Dev:
+    mainWindow.loadURL("http://localhost:3000");
+    // Prod:
+    // mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  });
+  
+  server.once("error", async (err) => {
+    if (err.code === "EADDRINUSE") {
+      if (splash && !splash.isDestroyed()) {
+        splash.close();
+      }
+  
+      await dialog.showMessageBox({
+        type: "error",
+        title: "Orbit",
+        message: "Orbit couldn't start.",
+        detail:
+          "The required local server port (54055) is already in use.\n\nPlease close the application using that port and try again.",
+      });
+  
+      app.quit();
+      return;
+    }
+  
+    throw err;
+  });
 });
 
 let dataDir;
@@ -4234,6 +4278,173 @@ ipcMain.handle("get-item-by-id", async (event, id) => {
   } catch (err) {
     console.error("get-item-by-id error:", err);
     return { success: false, error: err.message };
+  }
+});
+
+// Returns filename suggestion + size estimate for the backup popup
+ipcMain.handle("get-backup-preview", async () => {
+  try {
+    const configSize = fs.existsSync(configPath)
+      ? fs.statSync(configPath).size
+      : 0;
+
+    const dbFilePath = path.join(dataDir, "orbit-index.db");
+    const dbSize = fs.existsSync(dbFilePath) ? fs.statSync(dbFilePath).size : 0;
+
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const defaultFilename = `orbit-backup-${now.getFullYear()}-${pad(
+      now.getMonth() + 1,
+    )}-${pad(now.getDate())}.zip`;
+
+    return {
+      success: true,
+      configSize,
+      dbSize,
+      totalSize: configSize + dbSize,
+      defaultFilename,
+    };
+  } catch (err) {
+    console.error("get-backup-preview error:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+// Creates the zip. Opens a native save dialog so the user picks the destination.
+ipcMain.handle("create-backup", async (event, filename) => {
+  try {
+    const safeFilename = (filename || "orbit-backup.zip").trim() || "orbit-backup.zip";
+    const finalFilename = safeFilename.toLowerCase().endsWith(".zip")
+      ? safeFilename
+      : `${safeFilename}.zip`;
+
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: "Save Backup",
+      defaultPath: finalFilename,
+      filters: [{ name: "Zip Archives", extensions: ["zip"] }],
+    });
+
+    if (result.canceled || !result.filePath) {
+      return { success: false, canceled: true };
+    }
+
+    const zip = new AdmZip();
+
+    if (fs.existsSync(configPath)) {
+      zip.addLocalFile(configPath);
+    }
+
+    const dbFilePath = path.join(dataDir, "orbit-index.db");
+    if (fs.existsSync(dbFilePath)) {
+      zip.addLocalFile(dbFilePath);
+    }
+
+    zip.writeZip(result.filePath);
+
+    return { success: true, filePath: result.filePath };
+  } catch (err) {
+    console.error("create-backup error:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle("fetch-milestones", async () => {
+  try {
+    initDatabase();
+
+    const hasDate = `(create_date_local IS NOT NULL OR create_date IS NOT NULL OR created IS NOT NULL OR modified IS NOT NULL)`;
+    const dateExpr = `
+      CASE
+        WHEN create_date_local IS NOT NULL THEN create_date_local
+        WHEN create_date IS NOT NULL THEN datetime(create_date, 'unixepoch', 'localtime')
+        ELSE datetime(MIN(created, modified), 'unixepoch', 'localtime')
+      END
+    `;
+
+    const maxRow = db.prepare(`SELECT MAX(media_id) as maxId FROM files`).get();
+    const currentMax = maxRow?.maxId || 0;
+
+    if (currentMax === 0) {
+      return { success: true, achieved: [], upcoming: [], currentMax: 0 };
+    }
+
+    // --- Build the milestone ladder ---
+    // 1k, 10k, 25k, 50k, 75k, 100k, 150k, then every 50k to 1M, then every 100k after
+    const milestoneSet = [1000, 10000, 25000, 50000, 75000, 100000, 150000];
+    for (let m = 200000; m <= 1000000; m += 50000) milestoneSet.push(m);
+    const upperBound = Math.max(currentMax * 3, 2000000);
+    for (let m = 1100000; m <= upperBound; m += 100000) milestoneSet.push(m);
+
+    const achievedThresholds = milestoneSet.filter((m) => m <= currentMax);
+    const upcomingThresholds = milestoneSet.filter((m) => m > currentMax).slice(0, 8);
+
+    // --- Achieved: look up the actual date each milestone media_id was created ---
+    const achieved = [];
+    if (achievedThresholds.length) {
+      const placeholders = achievedThresholds.map(() => "?").join(",");
+      const rows = db
+        .prepare(`SELECT media_id, ${dateExpr} AS date FROM files WHERE media_id IN (${placeholders})`)
+        .all(...achievedThresholds);
+      const rowMap = Object.fromEntries(rows.map((r) => [r.media_id, r.date]));
+      for (const m of achievedThresholds) {
+        achieved.push({ milestone: m, date: rowMap[m] || null });
+      }
+    }
+
+    // --- Growth rate: weekly counts (zero-filled) -> EWMA, spike-capped ---
+    const dateRows = db.prepare(`SELECT ${dateExpr} AS date FROM files WHERE ${hasDate}`).all();
+
+    let weeklyRate = 0;
+    if (dateRows.length > 1) {
+      const WEEK_SECONDS = 7 * 24 * 60 * 60;
+      const buckets = {};
+      let minBucket = Infinity;
+
+      for (const row of dateRows) {
+        if (!row.date) continue;
+        const t = new Date(row.date.replace(" ", "T")).getTime();
+        if (isNaN(t)) continue;
+        const bucket = Math.floor(t / 1000 / WEEK_SECONDS);
+        buckets[bucket] = (buckets[bucket] || 0) + 1;
+        if (bucket < minBucket) minBucket = bucket;
+      }
+
+      const nowBucket = Math.floor(Date.now() / 1000 / WEEK_SECONDS);
+      const maxBucket = Math.max(nowBucket, ...Object.keys(buckets).map(Number));
+
+      const ALPHA = 0.2; // smoothing factor
+      const CAP_MULTIPLIER = 3; // clip any week to at most 3x the current smoothed rate
+      let ewma = null;
+
+      for (let b = minBucket; b <= maxBucket; b++) {
+        let value = buckets[b] || 0;
+        if (ewma !== null) {
+          const cap = ewma * CAP_MULTIPLIER;
+          if (value > cap) value = cap;
+        }
+        ewma = ewma === null ? value : ALPHA * value + (1 - ALPHA) * ewma;
+      }
+
+      weeklyRate = ewma || 0;
+    }
+
+    const dailyRate = weeklyRate / 7;
+    const MIN_DAILY_RATE = 0.02; // below this, growth is too flat to forecast meaningfully
+
+    const upcoming = upcomingThresholds.map((m) => {
+      const remaining = m - currentMax;
+      if (dailyRate < MIN_DAILY_RATE) {
+        return { milestone: m, predictedDate: null, unavailable: true };
+      }
+      const daysNeeded = remaining / dailyRate;
+      const predicted = new Date(Date.now() + daysNeeded * 86400000);
+      return { milestone: m, predictedDate: predicted.toISOString(), unavailable: false };
+    });
+
+    return { success: true, achieved, upcoming, currentMax, weeklyRate };
+  } catch (err) {
+    console.error("fetch-milestones error:", err);
+    return { success: false, error: err.message, achieved: [], upcoming: [] };
   }
 });
 
