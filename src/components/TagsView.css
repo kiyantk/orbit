@@ -72,23 +72,6 @@
   background: #3c3741;
 }
 
-.btn-gray {
-  background: #2b272e;
-  color: white;
-}
-
-.btn-gray:hover {
-  background: #3c3741;
-}
-
-.btn-warning {
-  background: #facc15;
-}
-
-.btn-warning:hover {
-  background: #eab308;
-}
-
 .btn-danger {
   background: #2b272e;
   color: white;
@@ -96,39 +79,6 @@
 
 .btn-danger:hover {
   background: #3c3741;
-}
-
-/* Modal */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9;
-}
-
-.modal {
-  background: #15131a;
-  padding: 20px;
-  border-radius: 8px;
-  width: 380px;
-  max-width: 95%;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-}
-
-.modal-title {
-  font-size: 1.1rem;
-  font-weight: bold;
-  margin-bottom: 12px;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 20px;
 }
 
 .input, .textarea {

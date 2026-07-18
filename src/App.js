@@ -51,6 +51,7 @@ const App = () => {
     existing: null,
   });
   const [explorerLoading, setExplorerLoading] = useState(false);
+  const [itemToReveal, setItemToReveal] = useState(null);
   const ambientModeActive =
     activeView === "shuffle" && shuffleSettings.ambientMode;
 
@@ -94,6 +95,11 @@ const App = () => {
     } else if (actionPanelType === "map-filter") {
       setMapFilters(data);
     }
+  };
+
+  const revealItemInExplorer = (item) => {
+    setActiveView("explore");
+    setItemToReveal(item);
   };
 
   useEffect(() => {
@@ -352,10 +358,10 @@ const App = () => {
             />
           )}
           {activeView === "stats" && (
-            <StatsView birthDate={settings.birthDate} />
+            <StatsView birthDate={settings.birthDate} currentSettings={settings} />
           )}
           {activeView === "map" && (
-            <MapView mapViewType={mapViewType} filters={mapFilters} />
+            <MapView mapViewType={mapViewType} filters={mapFilters} currentSettings={settings} onRevealItem={revealItemInExplorer} />
           )}
           {activeView === "tags" && (
             <TagsView
@@ -463,6 +469,8 @@ const App = () => {
                 explorerScale={explorerScale}
                 onFindSimilar={handleFindSimilar}
                 explorerLoading={explorerLoading}
+                itemToReveal={itemToReveal}
+                setItemToReveal={setItemToReveal}
               />
               <div className="border-l overflow-y-auto bg-gray-50">
                 {selectedItem ? (

@@ -14,14 +14,20 @@ import {
   faToolbox,
   faUser,
   faLocationDot,
+  faMap,
+  faChartSimple,
 } from "@fortawesome/free-solid-svg-icons";
 import FolderList from "./FolderList";
 import HeicPopup from "./HeicPopup";
+import Popup from "./Popup";
+import ConfirmPopup from "./ConfirmPopup";
 
 const TABS = [
   "User",
   "Media",
   "Explorer",
+  "Map",
+  "Stats",
   "Memories",
   "Places",
   "Storage",
@@ -33,6 +39,8 @@ const TAB_ICONS = {
   User: faUser,
   Media: faPhotoFilm,
   Explorer: faTableCells,
+  Map: faMap,
+  Stats: faChartSimple,
   Memories: faPanorama,
   Places: faLocationDot,
   Storage: faHardDrive,
@@ -90,43 +98,6 @@ const SettingsRow = ({ children }) => (
   <div className="settings-content-item">{children}</div>
 );
 
-// ─── Confirm Popup ────────────────────────────────────────────────────────────
-const ConfirmPopup = ({ message, subMessage, onConfirm, onCancel }) => (
-  <div className="welcome-popup-overlay">
-    <div className="confirm-popup" style={{ maxWidth: 420 }}>
-      <div className="welcome-popup-top">
-        <div className="welcome-popup-inline">
-          <h2>Remove source(s)</h2>
-        </div>
-      </div>
-      <div className="welcome-popup-content">
-        <span style={{ color: "#ccc" }}>
-          {message}
-          <br />
-          <br />
-          <strong>{subMessage}</strong>
-        </span>
-      </div>
-      <div className="settings-bottom-bar" style={{ gap: 8 }}>
-        <button
-          className="settings-cancel-btn"
-          style={{ backgroundColor: "#2d2a35" }}
-          onClick={onCancel}
-        >
-          No
-        </button>
-        <button
-          className="settings-save-btn"
-          style={{ backgroundColor: "#ff6b6b" }}
-          onClick={onConfirm}
-        >
-          Yes
-        </button>
-      </div>
-    </div>
-  </div>
-);
-
 // ─── Backup Popup ─────────────────────────────────────────────────────────
 const BackupPopup = ({
   preview,
@@ -137,64 +108,55 @@ const BackupPopup = ({
   isCreating,
   status,
 }) => (
-  <div className="welcome-popup-overlay">
-    <div className="confirm-popup" style={{ maxWidth: 480 }}>
-      <div className="welcome-popup-top">
-        <div className="welcome-popup-inline">
-          <h2>Create Backup</h2>
-        </div>
+  <Popup
+    title="Create Backup"
+    width={480}
+    actions={[
+      {
+        label: "Close",
+        kind: "secondary",
+        onClick: onClose,
+        disabled: isCreating,
+      },
+      {
+        label: isCreating ? "Creating…" : "Create Backup",
+        kind: "primary",
+        onClick: onCreate,
+        disabled: isCreating || !filename.trim(),
+      },
+    ]}
+  >
+    <SettingsRow>
+      <span>Filename:</span>
+      <input
+        className="settings-content-input"
+        type="text"
+        value={filename}
+        onChange={(e) => onFilenameChange(e.target.value)}
+        disabled={isCreating}
+      />
+    </SettingsRow>
+    <SettingsRow>
+      <span>Uncompressed size:</span>
+      <span>
+        {preview ? `~${formatBytes(preview.totalSize)}` : "Calculating…"}
+      </span>
+    </SettingsRow>
+    <span className="settings-hint">
+      Backs up config.json and orbit-index.db. Thumbnails are not included. The
+      actual zip may be smaller due to compression.
+    </span>
+    {status && (
+      <div
+        style={{
+          marginTop: 10,
+          color: status.type === "error" ? "#ff9a9a" : "#8ee6a0",
+        }}
+      >
+        {status.message}
       </div>
-      <div className="welcome-popup-content">
-        <SettingsRow>
-          <span>Filename:</span>
-          <input
-            className="settings-content-input"
-            type="text"
-            value={filename}
-            onChange={(e) => onFilenameChange(e.target.value)}
-            disabled={isCreating}
-          />
-        </SettingsRow>
-        <SettingsRow>
-          <span>Uncompressed size:</span>
-          <span>
-            {preview ? `~${formatBytes(preview.totalSize)}` : "Calculating…"}
-          </span>
-        </SettingsRow>
-        <span className="settings-hint">
-          Backs up config.json and orbit-index.db. Thumbnails are not included.
-          The actual zip may be smaller due to compression.
-        </span>
-        {status && (
-          <div
-            style={{
-              marginTop: 10,
-              color: status.type === "error" ? "#ff9a9a" : "#8ee6a0",
-            }}
-          >
-            {status.message}
-          </div>
-        )}
-      </div>
-      <div className="settings-bottom-bar" style={{ gap: 8 }}>
-        <button
-          className="settings-cancel-btn"
-          style={{ backgroundColor: "#2d2a35" }}
-          onClick={onClose}
-          disabled={isCreating}
-        >
-          Close
-        </button>
-        <button
-          className="settings-save-btn"
-          onClick={onCreate}
-          disabled={isCreating || !filename.trim()}
-        >
-          {isCreating ? "Creating…" : "Create Backup"}
-        </button>
-      </div>
-    </div>
-  </div>
+    )}
+  </Popup>
 );
 
 // ─── Smart Search Status Panel ────────────────────────────────────────────────
@@ -722,7 +684,7 @@ const SettingsView = ({
                   <label className="switch">
                     <input
                       type="checkbox"
-                      checked={!!settings.adjustHeicColors}
+                      checked={settings.adjustHeicColors ?? true}
                       onChange={handleCheckbox("adjustHeicColors")}
                     />
                     <div className="slider round"></div>
@@ -753,7 +715,7 @@ const SettingsView = ({
               <SettingsRow>
                 <span>Default sort:</span>
                 <select
-                  value={settings.defaultSort}
+                  value={settings.defaultSort ?? "media_id"}
                   onChange={handleSelect("defaultSort")}
                   className="settings-itemstyle-select"
                 >
@@ -788,7 +750,7 @@ const SettingsView = ({
                   Item text:
                 </span>
                 <select
-                  value={settings.itemText}
+                  value={settings.itemText ?? "filename"}
                   onChange={handleSelect("itemText")}
                   className="settings-itemstyle-select"
                   disabled={settings.explorerLayout !== "grid"}
@@ -828,13 +790,85 @@ const SettingsView = ({
                   <label className="switch">
                     <input
                       type="checkbox"
-                      checked={!!settings.explorerDateScroll}
+                      checked={settings.explorerDateScroll ?? true}
                       onChange={handleCheckbox("explorerDateScroll")}
                     />
                     <div className="slider round"></div>
                   </label>
                 </div>
                 <span>Show timeline overlay</span>
+              </SettingsRow>
+              <SettingsRow>
+                <span>Preset filter:</span>
+                <select
+                  value={settings.mediaFilter ?? "none"}
+                  onChange={handleSelect("mediaFilter")}
+                  className="settings-itemstyle-select"
+                >
+                  <option value="none">None (default)</option>
+                  <option value="extra_contrast">Extra Contrast</option>
+                  <option value="extra_bright">Extra Bright</option>
+                  <option value="extra_contrast_extra_bright">
+                    Extra Contrast + Extra Bright
+                  </option>
+                  <option value="extra_saturation">Extra Saturation</option>
+                  <option value="inverted">Inverted</option>
+                  <option value="inverted_pro">Inverted Pro</option>
+                  <option value="inverted_pro_bright">
+                    Inverted Pro Bright
+                  </option>
+                  <option value="inverted_extra_contrast">
+                    Inverted + Extra Contrast
+                  </option>
+                  <option value="inverted_extra_bright">
+                    Inverted + Extra Bright
+                  </option>
+                  <option value="inverted_extra_contrast_extra_bright">
+                    Inverted + Extra Contrast + Extra Bright
+                  </option>
+                  <option value="grayscale">Grayscale</option>
+                  <option value="grayscale_extra_contrast">
+                    Grayscale + Extra Contrast
+                  </option>
+                  <option value="grayscale_extra_bright">
+                    Grayscale + Extra Bright
+                  </option>
+                </select>
+              </SettingsRow>
+            </div>
+          )}
+
+          {selectedTab === "Map" && (
+            <div>
+              <SettingsRow>
+                <span>Map style:</span>
+                <select
+                  value={settings.mapStyle ?? "default"}
+                  onChange={handleSelect("mapStyle")}
+                  className="settings-itemstyle-select"
+                >
+                  <option value="default">Default</option>
+                  <option value="dark">Dark</option>
+                  <option value="grayscale">Grayscale</option>
+                </select>
+              </SettingsRow>
+            </div>
+          )}
+
+          {selectedTab === "Stats" && (
+            <div>
+              <SettingsRow>
+                <span>Table style:</span>
+                <select
+                  value={settings.tableStyle ?? "comfortable"}
+                  onChange={handleSelect("tableStyle")}
+                  className="settings-itemstyle-select"
+                >
+                  <option value="dense">Dense</option>
+                  <option value="compact">Compact</option>
+                  <option value="comfortable">Comfortable (default)</option>
+                  <option value="tall">Tall</option>
+                </select>
               </SettingsRow>
             </div>
           )}
@@ -844,7 +878,7 @@ const SettingsView = ({
               <SettingsRow>
                 <span>Open memories in:</span>
                 <select
-                  value={settings.openMemoriesIn}
+                  value={settings.openMemoriesIn ?? "explorer"}
                   onChange={handleSelect("openMemoriesIn")}
                   className="settings-itemstyle-select"
                 >
@@ -856,7 +890,7 @@ const SettingsView = ({
               <SettingsRow>
                 <span>Memories layout:</span>
                 <select
-                  value={settings.memoriesLayout}
+                  value={settings.memoriesLayout ?? "list"}
                   onChange={handleSelect("memoriesLayout")}
                   className="settings-itemstyle-select"
                 >
@@ -872,7 +906,7 @@ const SettingsView = ({
               <SettingsRow>
                 <span>Sort places by:</span>
                 <select
-                  value={settings.placesSortBy}
+                  value={settings.placesSortBy ?? "count"}
                   onChange={handleSelect("placesSortBy")}
                   className="settings-itemstyle-select"
                 >
@@ -886,7 +920,7 @@ const SettingsView = ({
               <SettingsRow>
                 <span>Thumbnails:</span>
                 <select
-                  value={settings.placesThumbnails}
+                  value={settings.placesThumbnails ?? "random"}
                   onChange={handleSelect("placesThumbnails")}
                   className="settings-itemstyle-select"
                 >
@@ -898,7 +932,7 @@ const SettingsView = ({
               <SettingsRow>
                 <span>Subtitles:</span>
                 <select
-                  value={settings.placesSubtitles}
+                  value={settings.placesSubtitles ?? "count"}
                   onChange={handleSelect("placesSubtitles")}
                   className="settings-itemstyle-select"
                 >
@@ -1340,83 +1374,80 @@ const SettingsView = ({
         />
       )}
       {showToolsPopup && (
-        <div className="welcome-popup-overlay">
-          <div className="welcome-popup">
-            <div className="welcome-popup-top">
-              <h2>Tools</h2>
-            </div>
-            <p>Select which tool to run:</p>
-            <div className="tools-popup-content">
-              {[
-                {
-                  label: "Index New Files",
-                  action: () => {
-                    setShowToolsPopup(false);
-                    startIndex(settings.indexedFolders);
-                  },
+        <Popup
+          title="Tools"
+          contentWidth="90%"
+          actions={[
+            {
+              label: "Close",
+              kind: "secondary",
+              onClick: () => setShowToolsPopup(false),
+            },
+          ]}
+        >
+          <p style={{ marginBottom: 10 }}>Select which tool to run:</p>
+          <div className="tools-popup-content">
+            {[
+              {
+                label: "Index New Files",
+                action: () => {
+                  setShowToolsPopup(false);
+                  startIndex(settings.indexedFolders);
                 },
-                {
-                  label: "Check Status",
-                  action: () => {
-                    setShowToolsPopup(false);
-                    checkStatusses();
-                  },
+              },
+              {
+                label: "Check Status",
+                action: () => {
+                  setShowToolsPopup(false);
+                  checkStatusses();
                 },
-                {
-                  label: "Verify IDs",
-                  action: () => {
-                    setShowToolsPopup(false);
-                    fixIDs();
-                  },
+              },
+              {
+                label: "Verify IDs",
+                action: () => {
+                  setShowToolsPopup(false);
+                  fixIDs();
                 },
-                {
-                  label: "Verify Thumbnails",
-                  action: () => {
-                    setShowToolsPopup(false);
-                    fixThumbnails();
-                  },
+              },
+              {
+                label: "Verify Thumbnails",
+                action: () => {
+                  setShowToolsPopup(false);
+                  fixThumbnails();
                 },
-                {
-                  label: "Cleanup Thumbnails",
-                  action: () => {
-                    setShowToolsPopup(false);
-                    cleanupThumbnails();
-                  },
+              },
+              {
+                label: "Cleanup Thumbnails",
+                action: () => {
+                  setShowToolsPopup(false);
+                  cleanupThumbnails();
                 },
-                {
-                  label: "Generate HEIC Thumbnails",
-                  action: () => {
-                    setShowToolsPopup(false);
-                    setShowHeicPopup(true);
-                  },
+              },
+              {
+                label: "Generate HEIC Thumbnails",
+                action: () => {
+                  setShowToolsPopup(false);
+                  setShowHeicPopup(true);
                 },
-                {
-                  label: "Remove Mode",
-                  action: () => {
-                    setShowToolsPopup(false);
-                    enterRemoveMode();
-                  },
+              },
+              {
+                label: "Remove Mode",
+                action: () => {
+                  setShowToolsPopup(false);
+                  enterRemoveMode();
                 },
-              ].map(({ label, action }) => (
-                <button
-                  key={label}
-                  className="welcome-popup-select-folders-btn"
-                  onClick={action}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <div className="settings-bottom-bar" style={{ height: 70 }}>
+              },
+            ].map(({ label, action }) => (
               <button
-                className="welcome-popup-select-folders-btn welcome-popup-select-folders-btn-margin"
-                onClick={() => setShowToolsPopup(false)}
+                key={label}
+                className="welcome-popup-select-folders-btn"
+                onClick={action}
               >
-                Close
+                {label}
               </button>
-            </div>
+            ))}
           </div>
-        </div>
+        </Popup>
       )}
 
       {confirmPopup && (

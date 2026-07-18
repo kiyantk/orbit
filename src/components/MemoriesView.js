@@ -2,6 +2,7 @@ import { faArrowRight } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { SnackbarProvider, enqueueSnackbar } from "notistack";
+import Popup from "./Popup";
 
 const ThumbnailStrip = React.memo(({ thumbnails = [] }) => (
   <div className="memory-thumbs">
@@ -19,24 +20,24 @@ const ThumbnailStrip = React.memo(({ thumbnails = [] }) => (
 
 const useFitTitles = (deps) => {
   const ref = useRef(null);
- 
+
   useEffect(() => {
     const container = ref.current;
     if (!container) return;
- 
+
     const fitTitles = () => {
       const grid = container.querySelector(".memories-grid.grid-layout");
       if (!grid) return;
- 
+
       const titles = grid.querySelectorAll(".memory-text .title");
       titles.forEach((el) => {
         // Reset so measurements are not tainted by a previous pass.
         el.style.fontSize = "";
- 
+
         const MAX_PX = 18;
         const MIN_PX = 14;
-        const STEP   = 0.5;
- 
+        const STEP = 0.5;
+
         // Fast path: if the title fits at the maximum size, use it directly
         // and skip the binary search entirely.
         el.style.fontSize = `${MAX_PX}px`;
@@ -44,13 +45,15 @@ const useFitTitles = (deps) => {
           // Already set — nothing more to do for this element.
           return;
         }
- 
-        let lo = MIN_PX, hi = MAX_PX - STEP, best = MIN_PX;
- 
+
+        let lo = MIN_PX,
+          hi = MAX_PX - STEP,
+          best = MIN_PX;
+
         while (lo <= hi) {
           const mid = parseFloat(((lo + hi) / 2).toFixed(1));
           el.style.fontSize = `${mid}px`;
- 
+
           // scrollWidth > offsetWidth  →  text overflows (too big)
           if (el.scrollWidth <= el.offsetWidth) {
             best = mid;
@@ -59,14 +62,14 @@ const useFitTitles = (deps) => {
             hi = mid - STEP;
           }
         }
- 
+
         el.style.fontSize = `${best}px`;
       });
     };
- 
+
     // Run once immediately after layout.
     fitTitles();
- 
+
     // Re-run whenever the container is resized (e.g. window resize,
     // sidebar collapse, layout change).
     const ro = new ResizeObserver(fitTitles);
@@ -74,10 +77,9 @@ const useFitTitles = (deps) => {
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
- 
+
   return ref;
 };
-
 
 const MemoriesView = ({
   switchMemoryMode,
@@ -112,9 +114,16 @@ const MemoriesView = ({
   });
 
   const gridRef = useFitTitles([
-  customMemories, years, months, trips, vacations, onThisDay,
-  selectedTab, memoryLayout, loading
-]);
+    customMemories,
+    years,
+    months,
+    trips,
+    vacations,
+    onThisDay,
+    selectedTab,
+    memoryLayout,
+    loading,
+  ]);
 
   const getMemoryBoxStyle = (thumbnails = []) => {
     if (memoryLayout !== "grid") return {};
@@ -790,151 +799,142 @@ const MemoriesView = ({
 
       {/* --- ADD MEMORY POPUP --- */}
       {showAddMemory && (
-        <div className="modal-overlay">
-          <div className="modal">
-            <h3 className="modal-title">Add New Memory</h3>
-
+        <Popup
+          title="Add New Memory"
+          actions={[
+            {
+              label: "Cancel",
+              kind: "secondary",
+              onClick: () => {
+                setShowAddMemory(false);
+                switchMemoryMode(null);
+              },
+            },
+            ...(memoryMode === "edit"
+              ? [
+                  {
+                    label: "Delete",
+                    kind: "danger",
+                    onClick: handleDeleteMemory,
+                    style: { borderRadius: "0px" },
+                  },
+                  {
+                    label: "Select Media",
+                    kind: "primary",
+                    onClick: () => {
+                      setShowAddMemory(false);
+                      switchMemoryMode(null);
+                      onAddMedia(newMemory);
+                    },
+                    style: { borderRadius: "0px" },
+                  },
+                ]
+              : []),
+            {
+              label: memoryMode === "edit" ? "Save Changes" : "Add Memory",
+              kind: "primary",
+              onClick: handleSaveMemory,
+            },
+          ]}
+        >
+          <input
+            type="text"
+            placeholder="Title"
+            className="input"
+            maxLength={20}
+            value={newMemory.title}
+            onChange={(e) =>
+              setNewMemory({ ...newMemory, title: e.target.value })
+            }
+          />
+          <input
+            placeholder="Description (short)"
+            className="input"
+            maxLength={20}
+            value={newMemory.description}
+            onChange={(e) =>
+              setNewMemory({ ...newMemory, description: e.target.value })
+            }
+          />
+          <div className="color-picker">
+            <label>Color</label>
             <input
-              type="text"
-              placeholder="Title"
-              className="input"
-              maxLength={20}
-              value={newMemory.title}
+              type="color"
+              value={newMemory.color}
               onChange={(e) =>
-                setNewMemory({ ...newMemory, title: e.target.value })
+                setNewMemory({ ...newMemory, color: e.target.value })
               }
             />
-
-            <input
-              placeholder="Description (short)"
-              className="input"
-              maxLength={20}
-              value={newMemory.description}
-              onChange={(e) =>
-                setNewMemory({ ...newMemory, description: e.target.value })
-              }
-            />
-
-            <div className="color-picker">
-              <label>Color</label>
-              <input
-                type="color"
-                value={newMemory.color}
-                onChange={(e) =>
-                  setNewMemory({ ...newMemory, color: e.target.value })
-                }
-              />
-            </div>
-
-            {memoryMode !== "edit" && (
-              <div className="quick-add-ui">
-                <label>Quick Add</label>
-
-                <div className="filter-row">
-                  <span>Start Date:</span>
-                  <input
-                    type="date"
-                    className="date-input"
-                    value={newMemory.startDate || ""}
-                    onChange={(e) =>
-                      setNewMemory({ ...newMemory, startDate: e.target.value })
-                    }
-                  />
-                </div>
-
-                <div className="filter-row">
-                  <span>End Date:</span>
-                  <input
-                    type="date"
-                    className="date-input"
-                    value={newMemory.endDate || ""}
-                    onChange={(e) =>
-                      setNewMemory({ ...newMemory, endDate: e.target.value })
-                    }
-                  />
-                </div>
-
-                <div className="filter-row">
-                  <span>ID from:</span>
-                  <input
-                    type="number"
-                    className="input"
-                    value={newMemory.mediaFrom || ""}
-                    onChange={(e) =>
-                      setNewMemory({ ...newMemory, mediaFrom: e.target.value })
-                    }
-                  />
-                </div>
-
-                <div className="filter-row">
-                  <span>ID to:</span>
-                  <input
-                    type="number"
-                    className="input"
-                    value={newMemory.mediaTo || ""}
-                    onChange={(e) =>
-                      setNewMemory({ ...newMemory, mediaTo: e.target.value })
-                    }
-                  />
-                </div>
-
-                <div className="filter-row">
-                  <span>Path starts with:</span>
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder="/photos/vacation/"
-                    value={newMemory.pathStartsWith || ""}
-                    onChange={(e) =>
-                      setNewMemory({
-                        ...newMemory,
-                        pathStartsWith: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div className="memory-hint">
-                  You can manually add photo's after creating the memory
-                </div>
-              </div>
-            )}
-
-            <div className="modal-actions">
-              <button
-                className="btn btn-primary"
-                onClick={() => {
-                  setShowAddMemory(false);
-                  switchMemoryMode(null);
-                }}
-              >
-                Cancel
-              </button>
-              {memoryMode === "edit" && (
-                <button
-                  className="btn btn-primary"
-                  onClick={handleDeleteMemory}
-                >
-                  Delete
-                </button>
-              )}
-              {memoryMode === "edit" && (
-                <button
-                  className="btn btn-primary"
-                  onClick={() => {
-                    setShowAddMemory(false);
-                    switchMemoryMode(null);
-                    onAddMedia(newMemory);
-                  }}
-                >
-                  Select Media
-                </button>
-              )}
-              <button className="btn btn-primary" onClick={handleSaveMemory}>
-                {memoryMode === "edit" ? "Save Changes" : "Add Memory"}
-              </button>
-            </div>
           </div>
-        </div>
+
+          {memoryMode !== "edit" && (
+            <div className="quick-add-ui">
+              <label>Quick Add</label>
+              <div className="filter-row">
+                <span>Start Date:</span>
+                <input
+                  type="date"
+                  className="date-input"
+                  value={newMemory.startDate || ""}
+                  onChange={(e) =>
+                    setNewMemory({ ...newMemory, startDate: e.target.value })
+                  }
+                />
+              </div>
+              <div className="filter-row">
+                <span>End Date:</span>
+                <input
+                  type="date"
+                  className="date-input"
+                  value={newMemory.endDate || ""}
+                  onChange={(e) =>
+                    setNewMemory({ ...newMemory, endDate: e.target.value })
+                  }
+                />
+              </div>
+              <div className="filter-row">
+                <span>ID from:</span>
+                <input
+                  type="number"
+                  className="input"
+                  value={newMemory.mediaFrom || ""}
+                  onChange={(e) =>
+                    setNewMemory({ ...newMemory, mediaFrom: e.target.value })
+                  }
+                />
+              </div>
+              <div className="filter-row">
+                <span>ID to:</span>
+                <input
+                  type="number"
+                  className="input"
+                  value={newMemory.mediaTo || ""}
+                  onChange={(e) =>
+                    setNewMemory({ ...newMemory, mediaTo: e.target.value })
+                  }
+                />
+              </div>
+              <div className="filter-row">
+                <span>Path starts with:</span>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="/photos/vacation/"
+                  value={newMemory.pathStartsWith || ""}
+                  onChange={(e) =>
+                    setNewMemory({
+                      ...newMemory,
+                      pathStartsWith: e.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div className="memory-hint">
+                You can manually add photo's after creating the memory
+              </div>
+            </div>
+          )}
+        </Popup>
       )}
 
       <SnackbarProvider maxSnack={1} />

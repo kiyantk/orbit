@@ -429,6 +429,10 @@ const defaultConfig = {
   placesSubtitles: "count",
   placesMinCount: 1,
   placesExcludeFlights: false,
+  explorerDateScroll: true,
+  mapStyle: "default",
+  tableStyle: "comfortable",
+  mediaFilter: "none",
   driveLetterMap: {},
 };
 
@@ -970,7 +974,7 @@ ipcMain.handle(
       const rows = db
         .prepare(
           `
-      SELECT latitude, longitude, altitude, country, create_date, filename, device_model
+      SELECT latitude, longitude, altitude, country, create_date, filename, device_model, media_id, id, thumbnail_path
       FROM files
       ${finalWhere}
     `,
@@ -1009,6 +1013,9 @@ ipcMain.handle(
             device: item.device_model,
             country: item.country,
             altitude: item.altitude,
+            item_id: item.id,
+            id: item.media_id,
+            thumbnail_path: item.thumbnail_path,
           },
         });
         heat.push([item.latitude, item.longitude, 1]);

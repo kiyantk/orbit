@@ -211,6 +211,8 @@ const ExplorerView = ({
   explorerScale,
   onFindSimilar,
   explorerLoading,
+  itemToReveal,
+  setItemToReveal,
 }) => {
   const [totalCount, setTotalCount] = useState(null);
   const [containerWidth, setContainerWidth] = useState(1200);
@@ -219,7 +221,6 @@ const ExplorerView = ({
   const [addModeSelected, setAddModeSelected] = useState(new Set());
   const [removeModeSelected, setRemoveModeSelected] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null);
-  const [itemToReveal, setItemToReveal] = useState(null);
   const [noGutters, setNoGutters] = useState(false);
   const [, forceUpdate] = useState(0);
   const [currentScrollTop, setCurrentScrollTop] = useState(0);

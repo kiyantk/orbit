@@ -9,6 +9,8 @@ import {
   faPen,
 } from "@fortawesome/free-solid-svg-icons";
 import TagPill from "./TagPill";
+import Popup from "./Popup";
+import ConfirmPopup from "./ConfirmPopup";
 
 const TagsView = ({ onViewTag, onAddMedia, showPopup, setShowPopup }) => {
   const [tags, setTags] = useState([]);
@@ -139,92 +141,74 @@ const TagsView = ({ onViewTag, onAddMedia, showPopup, setShowPopup }) => {
 
       {/* Create/Edit Popup */}
       {showPopup && showPopup.value && (
-        <div className="modal-overlay">
-          <div className="modal">
-            <h3 className="modal-title">
-              {editingTag ? "Edit Tag" : "Create New Tag"}
-            </h3>
+        <Popup
+          title={editingTag ? "Edit Tag" : "Create New Tag"}
+          actions={[
+            {
+              label: "Cancel",
+              kind: "secondary",
+              onClick: () => {
+                setShowPopup(false);
+                setEditingTag(null);
+              },
+            },
+            {
+              label: editingTag ? "Save" : "Create",
+              kind: "primary",
+              onClick: handleSaveTag,
+            },
+          ]}
+        >
+          <input
+            type="text"
+            placeholder="Name"
+            className="input"
+            maxLength={30}
+            value={newTag.name}
+            onChange={(e) => setNewTag({ ...newTag, name: e.target.value })}
+          />
+          <textarea
+            placeholder="Description"
+            className="textarea"
+            maxLength={100}
+            value={newTag.description}
+            onChange={(e) =>
+              setNewTag({ ...newTag, description: e.target.value })
+            }
+          />
+          <div className="color-picker">
+            <label>Color:</label>
             <input
-              type="text"
-              placeholder="Name"
-              className="input"
-              maxLength={30}
-              value={newTag.name}
-              onChange={(e) => setNewTag({ ...newTag, name: e.target.value })}
+              type="color"
+              value={newTag.color}
+              onChange={(e) => setNewTag({ ...newTag, color: e.target.value })}
             />
-            <textarea
-              placeholder="Description"
-              className="textarea"
-              maxLength={100}
-              value={newTag.description}
-              onChange={(e) =>
-                setNewTag({ ...newTag, description: e.target.value })
-              }
-            />
-            <div className="color-picker">
-              <label>Color:</label>
-              <input
-                type="color"
-                value={newTag.color}
-                onChange={(e) =>
-                  setNewTag({ ...newTag, color: e.target.value })
-                }
-              />
-            </div>
-            <div className="tag-preview">
-              <span className="tag-preview-label">Preview:</span>
-
-              <TagPill
-                tag={{
-                  name: newTag.name || "Example Tag",
-                  color: newTag.color,
-                  description: newTag.description,
-                }}
-              />
-            </div>
-            <div className="modal-actions">
-              <button
-                onClick={() => {
-                  setShowPopup(false);
-                  setEditingTag(null);
-                }}
-                className="btn btn-gray"
-              >
-                Cancel
-              </button>
-              <button onClick={handleSaveTag} className="btn btn-primary">
-                {editingTag ? "Save" : "Create"}
-              </button>
-            </div>
           </div>
-        </div>
+          <div className="tag-preview">
+            <span className="tag-preview-label">Preview:</span>
+            <TagPill
+              tag={{
+                name: newTag.name || "Example Tag",
+                color: newTag.color,
+                description: newTag.description,
+              }}
+            />
+          </div>
+        </Popup>
       )}
 
-      {/* Delete confirmation */}
       {confirmDelete && (
-        <div className="modal-overlay">
-          <div className="modal">
-            <h3 className="modal-title">Delete Tag</h3>
-            <p>
+        <ConfirmPopup
+          title="Delete Tag"
+          message={
+            <>
               Are you sure you want to delete tag{" "}
               <strong>{confirmDelete.name}</strong>?
-            </p>
-            <div className="modal-actions">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="btn btn-gray"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleDeleteTag(confirmDelete.id)}
-                className="btn btn-danger"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => handleDeleteTag(confirmDelete.id)}
+        />
       )}
     </div>
   );

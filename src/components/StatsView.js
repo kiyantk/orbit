@@ -29,7 +29,7 @@ ChartJS.register(
   zoomPlugin,
 );
 
-const StatsView = ({ birthDate }) => {
+const StatsView = ({ birthDate, currentSettings }) => {
   const [stats, setStats] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
@@ -304,7 +304,7 @@ const StatsView = ({ birthDate }) => {
   };
 
   return (
-    <div className="stats-layout">
+    <div className="stats-layout" data-tablestyle={currentSettings.tableStyle}>
       <div className="tabs-sidebar">
         {[
           { id: "overview", label: "Overview" },

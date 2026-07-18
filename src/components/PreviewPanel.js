@@ -201,6 +201,7 @@ export default function PreviewPanel({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [itemCountry, setItemCountry] = useState(null);
+  const [itemPlace, setItemPlace] = useState(null);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [tags, setTags] = useState([]);
@@ -251,18 +252,54 @@ export default function PreviewPanel({
     setIsPlaying(true);
     setIsLoading(true);
 
-    if (!item?.country) {
-      setItemCountry(null);
-      return;
-    }
+    setItemCountry("");
+    setItemPlace("");
+
     window.electron.ipcRenderer
       .invoke("get-country-name", item.country)
       .then(setItemCountry)
       .catch((err) => console.error("Error converting country:", err));
 
-    if (isFullscreen && isVideo) {
-      wasNormalPlayingRef.current = !videoRefNormal.current?.paused;
-      videoRefNormal.current?.pause();
+    // Place
+    window.electron.ipcRenderer
+      .invoke("location:get-for-files", [item.id])
+      .then((result) => {
+        if (!result.success || result.rows.length === 0) {
+          setItemPlace(null);
+          return;
+        }
+
+        const location = result.rows[0];
+
+        const place = location.city || location.subdivision || null;
+
+        setItemPlace(place);
+      })
+      .catch((err) => {
+        console.error("Failed to fetch location:", err);
+        setItemPlace(null);
+      });
+
+    // Always stop normal video while fullscreen is active
+    if (isFullscreen && isVideo && videoRefNormal.current) {
+      videoRefNormal.current.pause();
+    }
+
+    const video = currentVideoRef.current;
+
+    if (video) {
+      video.currentTime = 0;
+
+      const playNewVideo = () => {
+        safePlay(video);
+        setIsPlaying(true);
+      };
+
+      video.addEventListener("loadeddata", playNewVideo, { once: true });
+
+      return () => {
+        video.removeEventListener("loadeddata", playNewVideo);
+      };
     }
   }, [item]);
 
@@ -458,6 +495,7 @@ export default function PreviewPanel({
                 loop
                 className={`video-element ${isLoading ? "hidden" : ""}`}
                 onLoadedData={() => setIsLoading(false)}
+                data-visualfilter={currentSettings?.mediaFilter ?? "none"}
               />
               {isHovered && (
                 <VideoControls
@@ -472,9 +510,10 @@ export default function PreviewPanel({
             <img
               src={fileUrl}
               alt={item.filename}
-              className={`max-h-[500px] object-contain rounded-lg bg-gray-200 ${isLoading ? "hidden" : ""} ${heicClass}`}
+              className={`normal-image max-h-[500px] object-contain rounded-lg bg-gray-200 ${isLoading ? "hidden" : ""} ${heicClass}`}
               onClick={openFullscreen}
               onLoad={() => setIsLoading(false)}
+              data-visualfilter={currentSettings?.mediaFilter ?? "none"}
             />
           )}
         </div>
@@ -543,7 +582,7 @@ export default function PreviewPanel({
             </div>
           </MetaRow>
         )}
-
+        <MetaRow label="Place" value={itemPlace} />
         <MetaRow label="Country" value={item.country ? itemCountry : null} />
         <MetaRow label="Lens" value={item.lens_model} />
         <MetaRow label="ISO" value={item.iso} />
@@ -624,10 +663,13 @@ export default function PreviewPanel({
                 <video
                   ref={videoRefFullscreen}
                   src={fileUrl}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
                   autoPlay
                   muted={isMuted}
                   loop
                   className="video-element"
+                  data-visualfilter={currentSettings?.mediaFilter ?? "none"}
                 />
                 {(isHovered || isSeeking) && (
                   <VideoControls
@@ -656,6 +698,7 @@ export default function PreviewPanel({
                   setZoom(1);
                   setOffset({ x: 0, y: 0 });
                 }}
+                data-visualfilter={currentSettings?.mediaFilter ?? "none"}
               />
             )}
           </div>

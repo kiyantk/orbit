@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faArrowRight } from "@fortawesome/free-solid-svg-icons";
 import TagPill from "./TagPill";
+import ConfirmPopup from "./ConfirmPopup";
 
 const ContextMenu = ({
   x,
@@ -162,7 +163,7 @@ const ContextMenu = ({
             cursor: "pointer",
             whiteSpace: "nowrap",
             textAlign: "left",
-            color: "#ff6b6b",
+            color: "rgb(166 49 49)",
           }}
           className="context-menu-item"
           onMouseEnter={() => setShowTags(false)}
@@ -219,52 +220,30 @@ const ContextMenu = ({
       )}
 
       {showRemoveConfirm && (
-        <div className="welcome-popup-overlay">
-          <div className="confirm-popup" style={{ maxWidth: 420 }}>
-            <div className="welcome-popup-top">
-              <div className="welcome-popup-inline">
-                <h2>Remove item</h2>
-              </div>
-            </div>
-
-            <div className="welcome-popup-content">
-              <span style={{ color: "#ccc" }}>
-                Are you sure you want to remove
-                <br />
-                <strong>{item.filename}</strong>
-                <br />
-                from the index?
-                <br />
-                <br />
-                This does not delete the original file.
-                <br />
-                This action cannot be undone.
-              </span>
-            </div>
-
-            <div className="settings-bottom-bar" style={{ gap: 8 }}>
-              <button
-                className="settings-cancel-btn"
-                style={{ backgroundColor: "#2d2a35" }}
-                onClick={() => setShowRemoveConfirm(false)}
-              >
-                No
-              </button>
-
-              <button
-                className="settings-save-btn"
-                style={{ backgroundColor: "#ff6b6b" }}
-                onClick={() => {
-                  onRemoveItem(item.id);
-                  setShowRemoveConfirm(false);
-                  onClose();
-                }}
-              >
-                Yes
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmPopup
+          title="Remove item"
+          message={
+            <>
+              Are you sure you want to remove
+              <br />
+              <strong>{item.filename}</strong>
+              <br />
+              from the index?
+              <br />
+              <br />
+              This does not delete the original file.
+              <br />
+              This action cannot be undone.
+            </>
+          }
+          confirmButtonStyle={{ backgroundColor: "rgb(166 49 49)" }}
+          onCancel={() => setShowRemoveConfirm(false)}
+          onConfirm={() => {
+            onRemoveItem(item.id);
+            setShowRemoveConfirm(false);
+            onClose();
+          }}
+        />
       )}
     </div>
   );

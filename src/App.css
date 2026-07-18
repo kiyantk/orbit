@@ -487,28 +487,6 @@ body {
   box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
 }
 
-.confirm-popup {
-  position: relative;
-  background-color: #15131a;
-  padding: 0px;
-  border-radius: 8px;
-  width: 50%;
-  padding-top: 2px;
-  /* height: 25%; */
-  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
-}
-
-.heic-popup {
-  position: relative;
-  background-color: #15131a;
-  padding: 0px;
-  border-radius: 8px;
-  width: 60%;
-  padding-top: 2px;
-  height: 60%;
-  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
-}
-
 .welcome-popup h2 {
   /* border-bottom: 1px solid #2c2c2c; */
   padding-bottom: 5px;
@@ -584,9 +562,9 @@ select:disabled {
 .video-control,
 .fullscreen-close {
   color: white;
-  background: rgba(0, 0, 0, 0.6);
+  background: #15131a;
   border: none;
-  border-radius: 9999px;
+  border-radius: 10px;
   padding: 12px;
   cursor: pointer;
   transition: background 0.2s ease;
@@ -630,6 +608,7 @@ select:disabled {
   justify-content: center;
   align-items: center;
   z-index: 9999;
+  backdrop-filter: blur(1px);
 }
 
 .fullscreen-content {
@@ -646,8 +625,8 @@ select:disabled {
 
 .fullscreen-close {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 18px;
+  right: 18px;
   font-size: 1rem;
   color: white;
   padding: 6px;
@@ -655,6 +634,9 @@ select:disabled {
   cursor: pointer;
   width: 30px;
   height: 30px;
+  border: 1px solid #484050;
+  box-shadow: rgba(0, 0, 0, 0.19) 0px 10px 20px, rgba(0, 0, 0, 0.23) 0px 6px 6px;
+  line-height: 1;
 }
 
 .fullscreen-image {
@@ -942,12 +924,6 @@ select:disabled {
 
 .unknown-row {
   color: #888; /* slightly gray */
-}
-
-.heic-popup-content {
-  width: 90%;
-  justify-self: center;
-  margin-top: 10px;
 }
 
 .loader {
@@ -2572,4 +2548,183 @@ input[type="checkbox"] {
   overflow-x: auto;
   max-width: 100%;
   padding-bottom: 20px;
+}
+
+.map-container[data-mapstyle="default"] .leaflet-tile-pane {
+  filter: none;
+}
+
+.map-container[data-mapstyle="dark"] {
+  background-color: black;
+}
+
+.map-container[data-mapstyle="dark"] .leaflet-tile-pane {
+  filter: invert(1) saturate(0) contrast(1.1);
+}
+
+.map-container[data-mapstyle="grayscale"] .leaflet-tile-pane {
+  filter: brightness(0.9) contrast(1.2) grayscale(1);
+}
+
+.stats-layout[data-tablestyle="dense"] .stats-card th, .stats-layout[data-tablestyle="dense"] .stats-card td {
+  line-height: 0.5;
+}
+
+.stats-layout[data-tablestyle="compact"] .stats-card th, .stats-layout[data-tablestyle="compact"] .stats-card td {
+  line-height: 1;
+}
+
+.stats-layout[data-tablestyle="comfortable"] .stats-card th, .stats-layout[data-tablestyle="comfortable"] .stats-card td {
+  line-height: unset;
+}
+
+.stats-layout[data-tablestyle="tall"] .stats-card th, .stats-layout[data-tablestyle="tall"] .stats-card td {
+  line-height: 2;
+}
+
+.normal-image[data-visualfilter="none"], .fullscreen-image[data-visualfilter="none"], .video-element[data-visualfilter="none"] {
+  filter: none;
+}
+
+.normal-image[data-visualfilter="extra_contrast"],
+.fullscreen-image[data-visualfilter="extra_contrast"],
+.video-element[data-visualfilter="extra_contrast"] {
+  filter: contrast(1.5);
+}
+
+.normal-image[data-visualfilter="extra_bright"],
+.fullscreen-image[data-visualfilter="extra_bright"],
+.video-element[data-visualfilter="extra_bright"] {
+  filter: brightness(1.5);
+}
+
+.normal-image[data-visualfilter="extra_contrast_extra_bright"],
+.fullscreen-image[data-visualfilter="extra_contrast_extra_bright"],
+.video-element[data-visualfilter="extra_contrast_extra_bright"] {
+  filter: contrast(1.5) brightness(1.5);
+}
+
+.normal-image[data-visualfilter="extra_saturation"],
+.fullscreen-image[data-visualfilter="extra_saturation"],
+.video-element[data-visualfilter="extra_saturation"] {
+  filter: saturate(5);
+}
+
+.normal-image[data-visualfilter="inverted"],
+.fullscreen-image[data-visualfilter="inverted"],
+.video-element[data-visualfilter="inverted"] {
+  filter: invert(1);
+}
+
+.normal-image[data-visualfilter="inverted_pro"],
+.fullscreen-image[data-visualfilter="inverted_pro"],
+.video-element[data-visualfilter="inverted_pro"] {
+  filter: saturate(1.2) brightness(1.5) contrast(0.8) invert(1);
+}
+
+.normal-image[data-visualfilter="inverted_pro_bright"],
+.fullscreen-image[data-visualfilter="inverted_pro_bright"],
+.video-element[data-visualfilter="inverted_pro_bright"] {
+  filter: saturate(2.3) brightness(0.6) contrast(0.8) invert(1);
+}
+
+.normal-image[data-visualfilter="inverted_extra_contrast"],
+.fullscreen-image[data-visualfilter="inverted_extra_contrast"],
+.video-element[data-visualfilter="inverted_extra_contrast"] {
+  filter: invert(1) contrast(1.5);
+}
+
+.normal-image[data-visualfilter="inverted_extra_bright"],
+.fullscreen-image[data-visualfilter="inverted_extra_bright"],
+.video-element[data-visualfilter="inverted_extra_bright"] {
+  filter: invert(1) brightness(1.5);
+}
+
+.normal-image[data-visualfilter="inverted_extra_contrast_extra_bright"],
+.fullscreen-image[data-visualfilter="inverted_extra_contrast_extra_bright"],
+.video-element[data-visualfilter="inverted_extra_contrast_extra_bright"] {
+  filter: invert(1) contrast(1.5) brightness(1.5);
+}
+
+.normal-image[data-visualfilter="grayscale"],
+.fullscreen-image[data-visualfilter="grayscale"],
+.video-element[data-visualfilter="grayscale"] {
+  filter: grayscale(1);
+}
+
+.normal-image[data-visualfilter="grayscale_extra_contrast"],
+.fullscreen-image[data-visualfilter="grayscale_extra_contrast"],
+.video-element[data-visualfilter="grayscale_extra_contrast"] {
+  filter: grayscale(1) contrast(1.5);
+}
+
+.normal-image[data-visualfilter="grayscale_extra_bright"],
+.fullscreen-image[data-visualfilter="grayscale_extra_bright"],
+.video-element[data-visualfilter="grayscale_extra_bright"] {
+  filter: grayscale(1) brightness(1.5);
+}
+
+.leaflet-popup-close-button {
+  display: none !important;
+}
+
+.leaflet-popup-content {
+  text-align: center;
+  margin: 10px 20px !important;
+}
+
+.leaflet-popup-content-wrapper, .leaflet-popup-tip {
+  background: #15131a !important;
+  color: white !important;
+}
+
+.leaflet-popup-content img {
+  border: 1px solid #7a7a7a;
+  border-radius: 8px;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.map-popup-image-wrapper {
+  position: relative;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+
+.map-popup-image {
+  max-width: 100%;
+  height: auto;
+  transition: opacity 0.15s ease;
+}
+
+.map-popup-open-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.map-popup-image-wrapper:hover .map-popup-image {
+  opacity: 0.5;
+}
+
+.map-popup-image-wrapper:hover .map-popup-open-label {
+  opacity: 1;
+}
+
+.popup-bottom-bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.popup-bottom-bar-left,
+.popup-bottom-bar-right {
+  display: flex;
+  gap: 8px;
 }

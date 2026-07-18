@@ -9,32 +9,32 @@ import * as topojson from "topojson-client";
 
 const TOPO_URL = "/countries.final.topo.json";
 
-const MapView = ({ mapViewType, filters }) => {
-  const containerRef   = useRef(null);
-  const mapRef         = useRef(null);
-  const clusterLayer   = useRef(null);
-  const heatLayer      = useRef(null);
-  const lineLayer      = useRef(null);
+const MapView = ({ mapViewType, filters, currentSettings, onRevealItem }) => {
+  const containerRef = useRef(null);
+  const mapRef = useRef(null);
+  const clusterLayer = useRef(null);
+  const heatLayer = useRef(null);
+  const lineLayer = useRef(null);
   const countriesLayer = useRef(null);
-  const geoJsonCache   = useRef(null);
-  const allCoords      = useRef([]);
+  const geoJsonCache = useRef(null);
+  const allCoords = useRef([]);
   // Tracks whether the component is still mounted — checked after every await
-  const mountedRef     = useRef(true);
+  const mountedRef = useRef(true);
   const activeLineLayerOnMap = useRef(null);
   const activeHeatLayerOnMap = useRef(null);
 
-  const [mapReady,           setMapReady]           = useState(false);
-  const [loading,            setLoading]            = useState(false);
-  const [firstLoaded,        setFirstLoaded]        = useState(false);
-  const [countryNameMap,     setCountryNameMap]     = useState({});
-  const [countryCounts,      setCountryCounts]      = useState({});
-  const [countryBounds,      setCountryBounds]      = useState({});
+  const [mapReady, setMapReady] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [firstLoaded, setFirstLoaded] = useState(false);
+  const [countryNameMap, setCountryNameMap] = useState({});
+  const [countryCounts, setCountryCounts] = useState({});
+  const [countryBounds, setCountryBounds] = useState({});
   const [countriesMenuVisible, setCountriesMenuVisible] = useState(false);
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
   const formatTimestamp = (timestamp) => {
     if (!timestamp) return "";
-    const d   = new Date(timestamp * 1000);
+    const d = new Date(timestamp * 1000);
     const pad = (n) => String(n).padStart(2, "0");
     return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   };
@@ -62,19 +62,28 @@ const MapView = ({ mapViewType, filters }) => {
     }).addTo(map);
 
     const cluster = L.markerClusterGroup({
-      chunkedLoading:      true,
-      chunkInterval:       100,
-      chunkDelay:          50,
-      maxClusterRadius:    90,
-      spiderfyOnMaxZoom:   true,
+      chunkedLoading: true,
+      chunkInterval: 100,
+      chunkDelay: 50,
+      maxClusterRadius: 90,
+      spiderfyOnMaxZoom: true,
       showCoverageOnHover: false,
       iconCreateFunction(c) {
         const count = c.getChildCount();
         let size, tier;
-        if      (count < 100)   { size = 28; tier = "small";  }
-        else if (count < 1000)  { size = 36; tier = "medium"; }
-        else if (count < 10000) { size = 44; tier = "large";  }
-        else                    { size = 52; tier = "xlarge"; }
+        if (count < 100) {
+          size = 28;
+          tier = "small";
+        } else if (count < 1000) {
+          size = 36;
+          tier = "medium";
+        } else if (count < 10000) {
+          size = 44;
+          tier = "large";
+        } else {
+          size = 52;
+          tier = "xlarge";
+        }
 
         const label =
           count >= 1000
@@ -82,10 +91,10 @@ const MapView = ({ mapViewType, filters }) => {
             : count;
 
         return L.divIcon({
-          html:      `<div class="custom-cluster custom-cluster--${tier}">${label}</div>`,
+          html: `<div class="custom-cluster custom-cluster--${tier}">${label}</div>`,
           className: "",
-          iconSize:  [size, size],
-          iconAnchor:[size / 2, size / 2],
+          iconSize: [size, size],
+          iconAnchor: [size / 2, size / 2],
         });
       },
     });
@@ -96,16 +105,16 @@ const MapView = ({ mapViewType, filters }) => {
     map.addLayer(cluster);
 
     clusterLayer.current = cluster;
-    mapRef.current       = map;
+    mapRef.current = map;
     setMapReady(true);
 
     return () => {
-      mountedRef.current   = false;
+      mountedRef.current = false;
       map.remove();
-      mapRef.current       = null;
+      mapRef.current = null;
       clusterLayer.current = null;
-      heatLayer.current    = null;
-      lineLayer.current    = null;
+      heatLayer.current = null;
+      lineLayer.current = null;
       countriesLayer.current = null;
     };
   }, []);
@@ -121,7 +130,9 @@ const MapView = ({ mapViewType, filters }) => {
 
       let res;
       try {
-        res = await window.electron.ipcRenderer.invoke("fetch-map-data", { filters });
+        res = await window.electron.ipcRenderer.invoke("fetch-map-data", {
+          filters,
+        });
       } catch (err) {
         console.error("[MapView] fetch-map-data failed:", err);
         if (!cancelled && mountedRef.current) setLoading(false);
@@ -130,7 +141,10 @@ const MapView = ({ mapViewType, filters }) => {
 
       // Bail out if the component unmounted or the effect was superseded
       if (cancelled || !mountedRef.current) return;
-      if (!res.success) { setLoading(false); return; }
+      if (!res.success) {
+        setLoading(false);
+        return;
+      }
 
       // Guard: map may have been torn down while awaiting
       if (!mapRef.current || !clusterLayer.current) return;
@@ -142,21 +156,74 @@ const MapView = ({ mapViewType, filters }) => {
         const marker = L.marker([p.lat, p.lng], {
           icon: L.icon({
             iconUrl: `${process.env.PUBLIC_URL}/marker.png`,
-            iconSize:  [10, 10],
-            iconAnchor:[5, 5],
+            iconSize: [10, 10],
+            iconAnchor: [5, 5],
           }),
         });
         marker.on("click", () => {
           if (!marker.getPopup()) {
-            const { filename, date, device, country, altitude } = p.popup;
+            const {
+              filename,
+              date,
+              device,
+              country,
+              altitude,
+              item_id,
+              id,
+              thumbnail_path,
+            } = p.popup;
+
+            const thumbSrc = thumbnail_path
+              ? `orbit://thumbs/${item_id}_thumb.jpg`
+              : null;
+
             marker
               .bindPopup(
-                `<b>${filename}</b><br>
-                 ${formatTimestamp(date)}<br>
-                 ${device   || "Unknown"}<br>
-                 ${country  || "Unknown"}${altitude ? ` | ${altitude.toFixed(0)}m` : ""}`
-              )
-              .openPopup();
+                `
+                  <div class="map-popup-image-wrapper">
+                    ${
+                      thumbSrc
+                        ? `<img 
+                             src="${thumbSrc}" 
+                             alt="${filename}" 
+                             class="map-popup-image"
+                           />`
+                        : ""
+                    }
+                    <div class="map-popup-open-label">Open</div>
+                  </div>
+                  
+                  <b>${filename}</b><br>
+                  ${formatTimestamp(date)}<br>
+                  ${device || "Unknown"}<br>
+                  ${country || "Unknown"}
+                  ${altitude ? ` | ${altitude.toFixed(0)}m` : ""}
+                `,
+              );
+            
+            marker.once("popupopen", (e) => {
+              requestAnimationFrame(() => {
+                const popup = e.popup.getElement();
+              
+                const wrapper = popup?.querySelector(
+                  ".map-popup-image-wrapper",
+                );
+              
+                if (!wrapper) {
+                  console.warn("Popup wrapper missing");
+                  return;
+                }
+              
+                wrapper.addEventListener("click", () => {
+                  onRevealItem({
+                    ...p.popup,
+                    media_id: p.popup.id,
+                  });
+                });
+              });
+            });
+            
+            marker.openPopup();
           }
         });
         return marker;
@@ -171,11 +238,11 @@ const MapView = ({ mapViewType, filters }) => {
 
       heatLayer.current = L.heatLayer(allCoords.current, {
         radius: 20,
-        blur:   15,
+        blur: 15,
       });
 
       lineLayer.current = L.featureGroup(
-        res.lines.map((seg) => L.polyline(seg, { color: "red", weight: 2 }))
+        res.lines.map((seg) => L.polyline(seg, { color: "red", weight: 2 })),
       );
 
       setCountryCounts(res.countryCounts);
@@ -190,7 +257,7 @@ const MapView = ({ mapViewType, filters }) => {
         Object.keys(res.countryCounts).map(async (code) => [
           code,
           await window.electron.ipcRenderer.invoke("get-country-name", code),
-        ])
+        ]),
       );
 
       if (cancelled || !mountedRef.current) return;
@@ -202,7 +269,9 @@ const MapView = ({ mapViewType, filters }) => {
 
     loadMapData();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [mapReady, filters]);
 
   // ─── Load and cache TopoJSON → GeoJSON ───────────────────────────────────
@@ -216,8 +285,7 @@ const MapView = ({ mapViewType, filters }) => {
     const keys = Object.keys(topo.objects);
     if (!keys.length) throw new Error("TopoJSON has no objects");
 
-    const key =
-      keys.find((k) => k.toLowerCase().includes("countr")) ?? keys[0];
+    const key = keys.find((k) => k.toLowerCase().includes("countr")) ?? keys[0];
 
     const geojson = topojson.feature(topo, topo.objects[key]);
     geoJsonCache.current = geojson;
@@ -260,11 +328,23 @@ const MapView = ({ mapViewType, filters }) => {
         style: (feature) => {
           const rawCode = getMatchedRawCode(feature);
           if (!rawCode) {
-            return { fillColor: "transparent", fillOpacity: 0, color: "#444", weight: 0.4, opacity: 0.3 };
+            return {
+              fillColor: "transparent",
+              fillOpacity: 0,
+              color: "#444",
+              weight: 0.4,
+              opacity: 0.3,
+            };
           }
-          const count   = visitedCodes[rawCode] || 1;
+          const count = visitedCodes[rawCode] || 1;
           const opacity = 0.35 + 0.3 * (count / maxCount);
-          return { fillColor: "#7f54b3", fillOpacity: opacity, color: "#4e1982", weight: 1.2, opacity: 0.9 };
+          return {
+            fillColor: "#7f54b3",
+            fillOpacity: opacity,
+            color: "#4e1982",
+            weight: 1.2,
+            opacity: 0.9,
+          };
         },
 
         onEachFeature: (feature, featureLayer) => {
@@ -272,29 +352,33 @@ const MapView = ({ mapViewType, filters }) => {
           if (!rawCode) return;
 
           const count = visitedCodes[rawCode] || 0;
-          const name  =
-            feature.properties.ADMIN   ||
-            feature.properties.NAME    ||
-            feature.properties.name    ||
+          const name =
+            feature.properties.ADMIN ||
+            feature.properties.NAME ||
+            feature.properties.name ||
             feature.properties.NAME_EN ||
             rawCode;
 
           featureLayer.on({
             mouseover(e) {
               e.target.setStyle({
-                fillOpacity: Math.min((e.target.options.fillOpacity || 0.5) + 0.2, 0.92),
+                fillOpacity: Math.min(
+                  (e.target.options.fillOpacity || 0.5) + 0.2,
+                  0.92,
+                ),
                 weight: 2,
               });
               e.target
                 .bindTooltip(
                   `<b>${name}</b><br/>${count} photo${count !== 1 ? "s" : ""}`,
-                  { sticky: true, className: "country-tooltip" }
+                  { sticky: true, className: "country-tooltip" },
                 )
                 .openTooltip();
             },
             mouseout(e) {
               // countriesLayer.current may have been replaced; guard it
-              if (countriesLayer.current) countriesLayer.current.resetStyle(e.target);
+              if (countriesLayer.current)
+                countriesLayer.current.resetStyle(e.target);
               e.target.closeTooltip();
             },
             click(e) {
@@ -308,14 +392,19 @@ const MapView = ({ mapViewType, filters }) => {
       map.addLayer(layer);
 
       // Fit to visited countries
-      const visitedFeatures = geojson.features.filter((f) => getMatchedRawCode(f) !== null);
+      const visitedFeatures = geojson.features.filter(
+        (f) => getMatchedRawCode(f) !== null,
+      );
       if (visitedFeatures.length) {
-        const tempLayer = L.geoJSON({ type: "FeatureCollection", features: visitedFeatures });
-        const bounds    = tempLayer.getBounds();
+        const tempLayer = L.geoJSON({
+          type: "FeatureCollection",
+          features: visitedFeatures,
+        });
+        const bounds = tempLayer.getBounds();
         if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30] });
       }
     },
-    [loadGeoJson]
+    [loadGeoJson],
   );
 
   // ─── Mode switch ──────────────────────────────────────────────────────────
@@ -325,10 +414,7 @@ const MapView = ({ mapViewType, filters }) => {
     if (!map || !clusterLayer.current) return;
 
     // Remove every managed layer that is currently on the map
-    const allLayers = [
-      clusterLayer.current,
-      countriesLayer.current,
-    ];
+    const allLayers = [clusterLayer.current, countriesLayer.current];
     allLayers.forEach((l) => l && map.hasLayer(l) && map.removeLayer(l));
 
     if (activeLineLayerOnMap.current) {
@@ -348,7 +434,6 @@ const MapView = ({ mapViewType, filters }) => {
       map.addLayer(clusterLayer.current);
       const bounds = clusterLayer.current.getBounds();
       if (bounds.isValid()) map.fitBounds(bounds);
-
     } else if (mapViewType === "heatmap") {
       // heatLayer may still be null if data hasn't loaded yet
       if (heatLayer.current) {
@@ -357,7 +442,6 @@ const MapView = ({ mapViewType, filters }) => {
         const bounds = L.latLngBounds(allCoords.current);
         if (bounds.isValid()) map.fitBounds(bounds);
       }
-
     } else if (mapViewType === "line") {
       if (lineLayer.current) {
         map.addLayer(lineLayer.current);
@@ -365,7 +449,6 @@ const MapView = ({ mapViewType, filters }) => {
         const bounds = lineLayer.current.getBounds();
         if (bounds.isValid()) map.fitBounds(bounds);
       }
-
     } else if (mapViewType === "countries") {
       setCountriesMenuVisible(true);
       // Only build if we have data
@@ -401,9 +484,11 @@ const MapView = ({ mapViewType, filters }) => {
 
       <div
         ref={containerRef}
+        className="map-container"
+        data-mapstyle={currentSettings.mapStyle}
         style={{
-          height:  "calc(100% - 23px)",
-          width:   "100%",
+          height: "calc(100% - 23px)",
+          width: "100%",
           display: !loading || firstLoaded ? "block" : "none",
         }}
       />
@@ -412,17 +497,17 @@ const MapView = ({ mapViewType, filters }) => {
         <div
           id="countriesMenu"
           style={{
-            position:   "absolute",
-            top:        40,
-            right:      20,
-            minWidth:   250,
-            maxHeight:  400,
-            overflowY:  "auto",
+            position: "absolute",
+            top: 40,
+            right: 20,
+            minWidth: 250,
+            maxHeight: 400,
+            overflowY: "auto",
             background: "rgba(44,44,44,0.95)",
-            color:      "white",
-            padding:    10,
+            color: "white",
+            padding: 10,
             borderRadius: 10,
-            zIndex:     1000,
+            zIndex: 1000,
           }}
         >
           <h3 style={{ margin: "0 0 8px" }}>Visited Countries</h3>
@@ -433,20 +518,27 @@ const MapView = ({ mapViewType, filters }) => {
                 <li
                   key={code}
                   style={{
-                    display:    "flex",
+                    display: "flex",
                     alignItems: "center",
-                    gap:        8,
-                    cursor:     "pointer",
-                    padding:    "4px 2px",
+                    gap: 8,
+                    cursor: "pointer",
+                    padding: "4px 2px",
                   }}
                   onClick={() => handleCountryClick(code)}
                 >
                   <img
                     src={`https://cdn.kiy.li/img/flags/${code.toLowerCase()}.svg`}
                     alt={code}
-                    style={{ width: 20, height: 14, objectFit: "cover", borderRadius: 2 }}
+                    style={{
+                      width: 20,
+                      height: 14,
+                      objectFit: "cover",
+                      borderRadius: 2,
+                    }}
                   />
-                  <span>{countryNameMap[code] || code} ({count})</span>
+                  <span>
+                    {countryNameMap[code] || code} ({count})
+                  </span>
                 </li>
               ))}
           </ul>
