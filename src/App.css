@@ -561,14 +561,22 @@ select:disabled {
 
 .video-control,
 .fullscreen-close {
-  color: white;
-  background: #15131a;
-  border: none;
-  border-radius: 10px;
   padding: 12px;
   cursor: pointer;
   transition: background 0.2s ease;
   text-align: center;
+  color: white;
+}
+
+.video-control {
+  background: rgba(0, 0, 0, 0.8);
+  border: none;
+  border-radius: 9999px;
+}
+
+.fullscreen-close {
+  background: #15131a;
+  border-radius: 10px;
 }
 
 .video-control:hover {

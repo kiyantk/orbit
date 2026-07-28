@@ -163,7 +163,7 @@ const ContextMenu = ({
             cursor: "pointer",
             whiteSpace: "nowrap",
             textAlign: "left",
-            color: "rgb(166 49 49)",
+            color: "#ff6b6b",
           }}
           className="context-menu-item"
           onMouseEnter={() => setShowTags(false)}

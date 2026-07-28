@@ -192,6 +192,7 @@ export default function PreviewPanel({
   const wasNormalPlayingRef = useRef(false);
   const imgRef = useRef(null);
   const lastMousePos = useRef(null);
+  const previousMediaId = useRef(null);
 
   const [isPlaying, setIsPlaying] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
@@ -248,6 +249,12 @@ export default function PreviewPanel({
   // ── Item change ────────────────────────────────────────────────────────────
 
   useEffect(() => {
+    const isNewMedia = previousMediaId.current !== item.id;
+
+    previousMediaId.current = item.id;
+
+    if(!isNewMedia) return;
+    
     setCurrentTime(0);
     setIsPlaying(true);
     setIsLoading(true);
