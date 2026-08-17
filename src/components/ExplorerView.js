@@ -253,10 +253,11 @@ const ExplorerView = ({
   const dragScrollTopRef = useRef(0); // live scrollTop during drag
   const dragStartScrollTop = useRef(0); // scrollTop captured at mousedown
   const dragPreExisting = useRef(new Set()); // selection snapshot before drag started
+  const dragSelectionModeRef = useRef(null); // "add" or "remove"
   const isDraggingRef = useRef(false);
   const dragRectRef = useRef(null); // mirrors dragRect without triggering re-renders mid-drag
   const lastMouseY = useRef(0);
-  const dragPendingRef = useRef(null); // { x, y, addModeSelected snapshot } while waiting to confirm drag
+  const dragPendingRef = useRef(null); // { x, y, selection snapshot, mode } while waiting to confirm drag
   const dragJustFinishedRef = useRef(false);
 
   // ─── Derived layout values ────────────────────────────────────────────────
@@ -594,7 +595,11 @@ const fetchTotalCount = useCallback(async (generation) => {
       //   Items in rect that were NOT pre-selected  → select them
       //   Items in rect that WERE pre-selected      → deselect them
       //   Items outside rect                        → restore pre-existing state
-      setAddModeSelected(() => {
+      const setSelection =
+        dragSelectionModeRef.current === "remove"
+          ? setRemoveModeSelected
+          : setAddModeSelected;
+      setSelection(() => {
         const next = new Set(dragPreExisting.current);
         indices.forEach((idx) => {
           const item = itemsRef.current[idx];
@@ -612,16 +617,19 @@ const fetchTotalCount = useCallback(async (generation) => {
   );
 
   // ─── Drag-select mouse handlers ───────────────────────────────────────────
-  const isAddModeActive = useCallback(() => {
-    return (
-      explorerMode?.enabled &&
-      (explorerMode.type === "tag" || explorerMode.type === "memory")
-    );
+  const getDragSelectionMode = useCallback(() => {
+    if (!explorerMode?.enabled) return null;
+    if (explorerMode.type === "tag" || explorerMode.type === "memory") {
+      return "add";
+    }
+    if (explorerMode.type === "remove") return "remove";
+    return null;
   }, [explorerMode]);
 
   const handleGridMouseDown = useCallback(
     (e) => {
-      if (!isAddModeActive()) return;
+      const selectionMode = getDragSelectionMode();
+      if (!selectionMode) return;
       if (e.button !== 0) return;
 
       e.preventDefault();
@@ -629,10 +637,13 @@ const fetchTotalCount = useCallback(async (generation) => {
         x: e.clientX,
         y: e.clientY,
         scrollTop: dragScrollTopRef.current,
-        selection: new Set(addModeSelected),
+        selection: new Set(
+          selectionMode === "remove" ? removeModeSelected : addModeSelected,
+        ),
+        selectionMode,
       };
     },
-    [isAddModeActive, addModeSelected],
+    [getDragSelectionMode, addModeSelected, removeModeSelected],
   );
 
   // Global mousemove / mouseup during drag (attached to window)
@@ -651,6 +662,7 @@ const fetchTotalCount = useCallback(async (generation) => {
           };
           dragStartScrollTop.current = dragPendingRef.current.scrollTop;
           dragPreExisting.current = dragPendingRef.current.selection;
+          dragSelectionModeRef.current = dragPendingRef.current.selectionMode;
           dragPendingRef.current = null;
         }
       }
@@ -674,6 +686,7 @@ const fetchTotalCount = useCallback(async (generation) => {
       isDraggingRef.current = false;
       dragStartRef.current = null;
       dragRectRef.current = null;
+      dragSelectionModeRef.current = null;
       setDragContentRect(null);
       // Clear the flag after the click event that may follow this mouseup has fired.
       // If mouseup landed on empty space, no click fires and the flag would persist
@@ -734,13 +747,20 @@ const fetchTotalCount = useCallback(async (generation) => {
             speed = MAX_SPEED * (1 - Math.max(0, distFromBottom) / EDGE_SIZE);
           }
           if (speed !== 0) {
-            const newScrollTop = Math.max(0, dragScrollTopRef.current + speed);
-            const rowIndex = Math.floor(newScrollTop / rowHeight);
+            const gridEl = nodeRef.current?.querySelector(".explorer-grid");
+            const maxScrollTop = Math.max(
+              0,
+              (gridEl?.scrollHeight || 0) - (gridEl?.clientHeight || 0),
+            );
+            const newScrollTop = Math.min(
+              maxScrollTop,
+              Math.max(0, dragScrollTopRef.current + speed),
+            );
 
-            gridRef.current.scrollToCell({
-              rowIndex,
-              columnIndex: 0,
-            });
+            // scrollToCell can leave the grid at a different offset than the
+            // requested value. That desynchronises the selection rectangle from
+            // the grid; scroll to the exact, clamped pixel offset instead.
+            gridRef.current?.scrollToPosition({ scrollTop: newScrollTop });
             dragScrollTopRef.current = newScrollTop;
             if (dragRectRef.current) applyDragRect(dragRectRef.current);
           }
