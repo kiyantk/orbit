@@ -335,7 +335,7 @@ const fetchTotalCount = useCallback(async (generation) => {
   try {
     const count = await window.electron.ipcRenderer.invoke(
       "get-filtered-files-count",
-      { filters },
+      { filters, settings: currentSettings || {} },
     );
     if (generation !== fetchGeneration.current) return;
     const n = Number(count) || 0;
@@ -344,7 +344,7 @@ const fetchTotalCount = useCallback(async (generation) => {
   } catch (err) {
     console.error("fetchTotalCount error", err);
   }
-}, [filters, filteredCountUpdated]);
+}, [filters, currentSettings, filteredCountUpdated]);
 
   const fetchAllIds = useCallback(async () => {
     const res = await window.electron.ipcRenderer.invoke("fetch-files", {
@@ -958,7 +958,7 @@ useEffect(() => {
     (async () => {
       const res = await window.electron.ipcRenderer.invoke(
         "fetch-file-overview",
-        { filters: filters || {}, settings: currentSettings },
+        { filters: filters || {}, settings: currentSettings || {} },
       );
 
       if (requestId !== overviewRequestId.current) return;
@@ -1104,7 +1104,7 @@ useEffect(() => {
     const revealItem = async (item) => {
       const itemIndex = await window.electron.ipcRenderer.invoke(
         "get-index-of-item",
-        { itemId: item.media_id },
+        { itemId: item.media_id, settings: currentSettings || {} },
       );
       if (itemIndex == null || cancelled) return;
 

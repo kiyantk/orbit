@@ -433,6 +433,7 @@ const defaultConfig = {
   mapStyle: "default",
   tableStyle: "comfortable",
   mediaFilter: "none",
+  hideScreenshotsAndScreenRecordings: false,
   driveLetterMap: {},
 };
 
@@ -464,6 +465,7 @@ function initDatabase() {
       folder_path TEXT NOT NULL,
       indexed_at INTEGER DEFAULT (strftime('%s', 'now')),
       file_type TEXT,
+      capture_type TEXT,
       device_model TEXT,
       camera_make TEXT,
       camera_model TEXT,
@@ -530,6 +532,13 @@ function initDatabase() {
       removed_at INTEGER DEFAULT (strftime('%s', 'now'))
     )
   `);
+
+    // SQLite's CREATE TABLE IF NOT EXISTS does not add columns to databases
+    // created by earlier versions, so migrate this schema addition explicitly.
+    const fileColumns = db.prepare("PRAGMA table_info(files)").all();
+    if (!fileColumns.some((column) => column.name === "capture_type")) {
+      db.exec("ALTER TABLE files ADD COLUMN capture_type TEXT");
+    }
 
     db.exec(`
     CREATE INDEX IF NOT EXISTS idx_files_create_date_local ON files(create_date_local);
@@ -829,6 +838,12 @@ function buildWhereClause(rawFilters = {}, options = {}) {
     }
   }
 
+  if (options.excludeScreenCaptures) {
+    clauses.push(
+      "COALESCE(capture_type, '') NOT IN ('screenshot', 'screen_recording')",
+    );
+  }
+
   // global safety filter
   if (options.allowUndated !== true) {
     clauses.push(`(
@@ -856,8 +871,11 @@ ipcMain.handle(
   ) => {
     try {
       initDatabase();
+      settings = settings ?? {};
 
-      const { sql: whereSQL, params } = buildWhereClause(filters);
+      const { sql: whereSQL, params } = buildWhereClause(filters, {
+        excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
+      });
 
       // --- sorting ---
       let orderSQL = "";
@@ -936,8 +954,11 @@ ipcMain.handle(
 
 ipcMain.handle("fetch-file-overview", async (event, { filters = {}, settings = {} }) => {
   initDatabase();
+  settings = settings ?? {};
 
-  const { sql: whereSQL, params } = buildWhereClause(filters);
+  const { sql: whereSQL, params } = buildWhereClause(filters, {
+    excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
+  });
 
   const stmt = db.prepare(`
     SELECT id, thumbnail_path
@@ -1074,8 +1095,11 @@ ipcMain.handle("get-filtered-files-count", async (event, args = {}) => {
     initDatabase();
 
     const filters = args.filters ?? {};
+    const settings = args.settings ?? {};
 
-    const { sql, params } = buildWhereClause(filters);
+    const { sql, params } = buildWhereClause(filters, {
+      excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
+    });
 
     const result = db
       .prepare(`SELECT COUNT(*) as count FROM files ${sql}`)
@@ -1285,9 +1309,25 @@ async function generateThumbnail(filePath, id) {
       return null; // unsupported file type
     }
   } catch (err) {
-    console.error(`Error generating thumbnail for ${filePath}:`, err.message);
+    console.warn(
+      `Thumbnail skipped for ${filePath}: ${summarizeThumbnailError(err)}`,
+    );
     return null;
   }
+}
+
+function summarizeThumbnailError(error) {
+  const message = String(error?.message || error || "Unknown error");
+  const usefulLine = message
+    .split(/\r?\n/)
+    .find(
+      (line) =>
+        /moov atom not found|invalid data found|permission denied|no such file/i.test(
+          line,
+        ),
+    );
+
+  return (usefulLine || message.split(/\r?\n/)[0]).trim();
 }
 
 ipcMain.handle("minimize-app", (event) => {
@@ -1494,7 +1534,10 @@ async function extractMetadata(filePath) {
 
   try {
     const exifData = await exiftool.read(filePath);
-    if (!exifData) return metadata;
+    if (!exifData) {
+      metadata.capture_type = classifyMediaCapture(filePath, metadata);
+      return metadata;
+    }
 
     metadata.camera_make = exifData.Make || null;
     metadata.camera_model = exifData.Model || null;
@@ -1574,7 +1617,64 @@ async function extractMetadata(filePath) {
     console.log(`No EXIF data for ${filePath}: ${err.message}`);
   }
 
+  metadata.capture_type = classifyMediaCapture(filePath, metadata);
   return metadata;
+}
+
+function classifyMediaCapture(_filePath, metadata) {
+  const software = String(metadata.software || "").toLowerCase();
+
+  if (metadata.file_type === "image") {
+    const cameraSignals = [
+      metadata.lens_model,
+      metadata.focal_length,
+      metadata.focal_length_35mm,
+      metadata.aperture,
+      metadata.exposure_time,
+      metadata.iso,
+    ].filter((value) => value != null && value !== "").length;
+
+    if (cameraSignals >= 2) return "camera";
+
+    if (cameraSignals === 0) return "screenshot";
+
+    const screenshotSoftware =
+      software.includes("screenshot") || software.includes("snipping tool");
+    if (screenshotSoftware) return "screenshot";
+
+    return "unknown";
+  }
+
+  if (metadata.file_type === "video") {
+    const cameraSignals = [
+      metadata.camera_make,
+      metadata.camera_model,
+      metadata.device_model,
+      metadata.lens_model,
+      metadata.focal_length,
+      metadata.focal_length_35mm,
+      metadata.aperture,
+      metadata.latitude,
+      metadata.longitude,
+    ].filter((value) => value != null && value !== "").length;
+
+    if (cameraSignals >= 2) return "camera";
+
+    if (cameraSignals === 0) return "screen_recording";
+
+    const screenRecordingSoftware =
+      software.includes("screen recording") ||
+      software.includes("screen recorder") ||
+      software.includes("screenrecord");
+
+    if (screenRecordingSoftware) {
+      return "screen_recording";
+    }
+
+    return "unknown";
+  }
+
+  return "unknown";
 }
 
 const pLimit = require("p-limit");
@@ -1584,11 +1684,28 @@ const METADATA_CONCURRENCY = Math.max(1, Math.floor(cpuCount / 2)); // 1 task pe
 const THUMBNAIL_CONCURRENCY = Math.max(1, Math.floor(cpuCount / 3)); // 1 task per 3 cores
 const BATCH_SIZE = 1000; // insert batch size
 const dbWriteLimit = pLimit(1);
+const SOURCE_RETRY_DELAY_MS = 5000;
+
+const waitForSourceRetry = () =>
+  new Promise((resolve) => setTimeout(resolve, SOURCE_RETRY_DELAY_MS));
+
+function isSourceDriveUnavailable(sourcePath) {
+  const root = path.parse(sourcePath).root;
+  return !!root && !fs.existsSync(root);
+}
 
 // Count total files for progress tracking
 function countTotalFiles(folderPath, existingPaths = new Set()) {
   let total = 0;
-  const entries = fs.readdirSync(folderPath, { withFileTypes: true });
+  let entries;
+  try {
+    entries = fs.readdirSync(folderPath, { withFileTypes: true });
+  } catch (err) {
+    console.warn(
+      `Unable to count files in ${folderPath}: ${err.code || err.message}`,
+    );
+    return total;
+  }
 
   for (const entry of entries) {
     const fullPath = path.join(folderPath, entry.name);
@@ -1608,14 +1725,44 @@ function countTotalFiles(folderPath, existingPaths = new Set()) {
 
 // Async generator for walking directories
 async function* walkDir(dir) {
-  const dirHandle = await fsPromises.opendir(dir);
-  for await (const entry of dirHandle) {
-    const res = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      yield* walkDir(res);
-    } else if (entry.isFile()) {
-      yield res;
+  let dirHandle;
+  while (!dirHandle) {
+    try {
+      dirHandle = await fsPromises.opendir(dir);
+    } catch (err) {
+      if (isSourceDriveUnavailable(dir)) {
+        console.warn(
+          `Indexing paused; source drive is unavailable. Retrying in ${SOURCE_RETRY_DELAY_MS / 1000}s: ${path.parse(dir).root}`,
+        );
+        await waitForSourceRetry();
+        continue;
+      }
+      console.warn(
+        `Indexing skipped unavailable folder ${dir}: ${err.code || err.message}`,
+      );
+      return;
     }
+  }
+
+  try {
+    for await (const entry of dirHandle) {
+      const res = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        yield* walkDir(res);
+      } else if (entry.isFile()) {
+        yield res;
+      }
+    }
+  } catch (err) {
+    if (isSourceDriveUnavailable(dir)) {
+      console.warn(
+        `Indexing paused; source drive is unavailable. Retrying in ${SOURCE_RETRY_DELAY_MS / 1000}s: ${path.parse(dir).root}`,
+      );
+      await waitForSourceRetry();
+      yield* walkDir(dir);
+      return;
+    }
+    console.warn(`Indexing stopped reading folder ${dir}: ${err.code || err.message}`);
   }
 }
 
@@ -1637,11 +1784,11 @@ async function indexFilesRecursively(
   const insertStmt = db.prepare(`
     INSERT OR REPLACE INTO files 
     (media_id, filename, path, size, created, modified, extension, folder_path,
-     file_type, device_model, camera_make, camera_model, width, height,
+     file_type, capture_type, device_model, camera_make, camera_model, width, height,
      orientation, latitude, longitude, altitude, create_date, create_date_local, thumbnail_path,
      lens_model, iso, software, offset_time_original, megapixels,
      exposure_time, color_space, flash, aperture, focal_length, focal_length_35mm, country)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const limitMetadata = pLimit(METADATA_CONCURRENCY);
@@ -1650,36 +1797,55 @@ async function indexFilesRecursively(
   let batchRows = [];
   let processed = 0;
   let lastUpdate = Date.now();
+  const reportProgress = () => {
+    const now = Date.now();
+    if (now - lastUpdate > 100) {
+      progressCallback?.(processed);
+      lastUpdate = now;
+    }
+  };
 
   for await (const filePath of walkDir(rootFolder)) {
     if (existingPaths.has(filePath)) {
       continue; // already indexed
     }
 
-    const stats = await fsPromises.stat(filePath);
-    const fileName = path.basename(filePath);
+    let stats;
+    let metadata;
+    try {
+      // Files on removable/network sources can disappear after walkDir finds
+      // them. Skip that file and keep the rest of the index run alive.
+      stats = await fsPromises.stat(filePath);
+      metadata = await limitMetadata(() => extractMetadata(filePath));
+    } catch (err) {
+      console.warn(
+        `Indexing skipped unavailable file ${filePath}: ${err.code || err.message}`,
+      );
+      processed++;
+      reportProgress();
+      continue;
+    }
 
-    const metadata = await limitMetadata(() => extractMetadata(filePath));
-
-    batchRows.push({ fileName, fullPath: filePath, stats, metadata });
+    batchRows.push({
+      fileName: path.basename(filePath),
+      fullPath: filePath,
+      stats,
+      metadata,
+    });
 
     if (batchRows.length >= BATCH_SIZE) {
       await insertBatch(batchRows, insertStmt, rootFolder, limitThumb);
+      for (const row of batchRows) existingPaths.add(row.fullPath);
       batchRows = [];
     }
 
     processed++;
-
-    // Throttle IPC progress updates (max 1 every 100ms)
-    const now = Date.now();
-    if (now - lastUpdate > 100) {
-      progressCallback?.(processed);
-      lastUpdate = now;
-    }
+    reportProgress();
   }
 
   if (batchRows.length > 0) {
     await insertBatch(batchRows, insertStmt, rootFolder, limitThumb);
+    for (const row of batchRows) existingPaths.add(row.fullPath);
     // processed += batchRows.length;
     progressCallback?.(processed);
   }
@@ -1871,6 +2037,58 @@ ipcMain.handle("fix-thumbnails", async () => {
   }
 });
 
+ipcMain.handle("detect-screenshots", async () => {
+  try {
+    initDatabase();
+
+    const rows = db
+      .prepare(
+        `
+          SELECT id, path, file_type, device_model, camera_make, camera_model,
+                 lens_model, focal_length, focal_length_35mm, aperture,
+                 exposure_time, iso, latitude, longitude, software
+          FROM files
+          WHERE capture_type IS NULL OR TRIM(capture_type) = '' OR capture_type = 'unknown'
+        `,
+      )
+      .all();
+
+    if (rows.length === 0) {
+      return { success: true, message: "Capture types are already detected." };
+    }
+
+    const updateStmt = db.prepare(
+      `
+        UPDATE files
+        SET capture_type = ?
+        WHERE id = ? AND (capture_type IS NULL OR TRIM(capture_type) = '' OR capture_type = 'unknown')
+      `,
+    );
+    const updateMany = db.transaction((files) => {
+      for (const file of files) {
+        file.capture_type = classifyMediaCapture(file.path, file);
+        updateStmt.run(file.capture_type, file.id);
+      }
+    });
+
+    await dbWriteLimit(() => updateMany(rows));
+
+    const screenshots = rows.filter(
+      (file) => file.capture_type === "screenshot",
+    ).length;
+    const recordings = rows.filter(
+      (file) => file.capture_type === "screen_recording",
+    ).length;
+    return {
+      success: true,
+      message: `Detected capture types for ${rows.length} files (${screenshots} screenshots, ${recordings} screen recordings).`,
+    };
+  } catch (err) {
+    console.error("Error detecting capture types:", err);
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle("generate-derived-thumbnails", async (event, size = 64) => {
   try {
     const pLimit = require("p-limit");
@@ -1978,6 +2196,7 @@ async function insertBatch(rows, insertStmt, rootFolder, limitThumb) {
             path.extname(row.fileName).toLowerCase(),
             rootFolder,
             row.metadata.file_type,
+            row.metadata.capture_type,
             row.metadata.device_model,
             row.metadata.camera_make,
             row.metadata.camera_model,
@@ -2020,7 +2239,7 @@ async function insertBatch(rows, insertStmt, rootFolder, limitThumb) {
 
   // Generate thumbnails concurrently
   const thumbsToUpdate = [];
-  await Promise.all(
+  const thumbnailResults = await Promise.allSettled(
     rows
       .filter((r) => ["image", "video"].includes(r.metadata.file_type))
       .map((r) =>
@@ -2032,6 +2251,16 @@ async function insertBatch(rows, insertStmt, rootFolder, limitThumb) {
         }),
       ),
   );
+
+  // Thumbnail generation is optional. A corrupt or unsupported media file must
+  // never interrupt the database insert or the rest of the indexing run.
+  for (const result of thumbnailResults) {
+    if (result.status === "rejected") {
+      console.warn(
+        `Thumbnail task skipped: ${summarizeThumbnailError(result.reason)}`,
+      );
+    }
+  }
 
   if (thumbsToUpdate.length > 0) {
     // Prepare once, reuse in a single transaction
@@ -2340,15 +2569,17 @@ ipcMain.handle("generate-thumbnails", async () => {
   }
 });
 
-ipcMain.handle("get-index-of-item", async (event, { itemId }) => {
+ipcMain.handle("get-index-of-item", async (event, { itemId, settings = {} }) => {
   try {
     if (!db) return null;
+    settings = settings ?? {};
 
     // Use media_id for a stable, deterministic descending sort (newest first)
     const stmt = db.prepare(`
       SELECT COUNT(*) as idx
       FROM files
       WHERE media_id > ?
+        ${settings.hideScreenshotsAndScreenRecordings ? "AND COALESCE(capture_type, '') NOT IN ('screenshot', 'screen_recording')" : ""}
     `);
 
     const row = stmt.get(itemId);

@@ -572,6 +572,8 @@ const SettingsView = ({
       );
     });
   const fixIDs = () => runTool("fix-media-ids", "Fixing media IDs");
+  const detectScreenshots = () =>
+    runTool("detect-screenshots", "Detecting capture types");
   const cleanupThumbnails = () =>
     runTool("cleanup-thumbnails", "Scanning for orphaned thumbnails");
 
@@ -693,6 +695,25 @@ const SettingsView = ({
                 <span>Adjust HEIC colors</span>
                 <span className="settings-hint">
                   Recommended. Improves color accuracy for HEIC photos.
+                </span>
+              </SettingsRow>
+              <SettingsRow>
+                <div className="slider-wrapper">
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={!!settings.hideScreenshotsAndScreenRecordings}
+                      onChange={handleCheckbox(
+                        "hideScreenshotsAndScreenRecordings",
+                      )}
+                    />
+                    <div className="slider round"></div>
+                  </label>
+                </div>
+                <span>Hide screenshots and screen recordings</span>
+                <span className="settings-hint">
+                  Experimental. Detection is not always accurate, so this may
+                  hide some photos or videos that are not screen captures.
                 </span>
               </SettingsRow>
               <SettingsRow>
@@ -1414,6 +1435,13 @@ const SettingsView = ({
                 action: () => {
                   setShowToolsPopup(false);
                   fixThumbnails();
+                },
+              },
+              {
+                label: "Detect capture types",
+                action: () => {
+                  setShowToolsPopup(false);
+                  detectScreenshots();
                 },
               },
               {

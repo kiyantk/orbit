@@ -39,6 +39,7 @@ const INTER_FILE_DELAY_MS     = 150;
 const ERROR_BACKOFF_THRESHOLD = 5;
 const ERROR_BACKOFF_MS        = 30_000;
 const RECHECK_INTERVAL_MS     = 60_000;
+const SOURCE_RETRY_DELAY_MS   = 5_000;
 const CHILD_RESTART_DELAY_MS  = 8_000;
 const NEEDS_CONVERSION        = new Set([".heic", ".heif", ".tif", ".tiff"]);
 
@@ -62,12 +63,31 @@ let pipelineReady     = false;
 let initError         = null;
 let consecutiveErrors = 0;
 const skippedIds      = new Set();
+const unavailableRoots = new Set();
 
 let imagePending = null;   // { resolve, reject }
 let textPending  = null;   // { resolve, reject, requestId }
 
 let total = 0;
 let done  = 0;
+let deferredLoopDelayMs = null;
+
+function isSourceDriveUnavailable(filePath) {
+  const root = path.parse(filePath).root;
+  if (!root || fs.existsSync(root)) {
+    unavailableRoots.delete(root);
+    return false;
+  }
+
+  if (!unavailableRoots.has(root)) {
+    unavailableRoots.add(root);
+    log(
+      "warn",
+      `embedding paused; source drive is unavailable. Retrying in ${SOURCE_RETRY_DELAY_MS / 1000}s: ${root}`,
+    );
+  }
+  return true;
+}
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 function ensureTable() {
@@ -212,8 +232,25 @@ function handleChildMessage(msg) {
     }
 
     case "embedError": {
-      log("warn", `embed error for file ${msg.fileId}: ${msg.error}`);
-      skippedIds.add(msg.fileId);
+      const missingFile = /404 Not Found|ENOENT|no such file/i.test(
+        msg.error || "",
+      );
+      const file = db.prepare("SELECT path FROM files WHERE id = ?").get(msg.fileId);
+      const sourceUnavailable =
+        missingFile && file && isSourceDriveUnavailable(file.path);
+      log(
+        "warn",
+        sourceUnavailable
+          ? `embedding deferred for file ${msg.fileId}`
+          : missingFile
+          ? `embedding skipped for missing file ${msg.fileId}`
+          : `embed error for file ${msg.fileId}: ${msg.error}`,
+      );
+      if (sourceUnavailable) {
+        deferredLoopDelayMs = SOURCE_RETRY_DELAY_MS;
+      } else {
+        skippedIds.add(msg.fileId);
+      }
       emitProgress();
       const ip2 = imagePending;
       imagePending = null;
@@ -275,11 +312,26 @@ async function loop() {
     return;
   }
 
+  if (!fs.existsSync(file.path)) {
+    if (isSourceDriveUnavailable(file.path)) {
+      scheduleLoop(SOURCE_RETRY_DELAY_MS);
+      return;
+    }
+    log("warn", `embedding skipped for missing file: ${file.path}`);
+    skippedIds.add(file.id);
+    scheduleLoop(INTER_FILE_DELAY_MS);
+    return;
+  }
+
   const ext = path.extname(file.path).toLowerCase();
 
   if (NEEDS_CONVERSION.has(ext)) {
     const imageBuffer = await convertToJpegBuffer(file);
     if (!imageBuffer) {
+      if (isSourceDriveUnavailable(file.path)) {
+        scheduleLoop(SOURCE_RETRY_DELAY_MS);
+        return;
+      }
       skippedIds.add(file.id);
       consecutiveErrors++;
       scheduleLoop(INTER_FILE_DELAY_MS);
@@ -302,7 +354,9 @@ async function loop() {
     });
   }
 
-  scheduleLoop(INTER_FILE_DELAY_MS);
+  const nextDelay = deferredLoopDelayMs ?? INTER_FILE_DELAY_MS;
+  deferredLoopDelayMs = null;
+  scheduleLoop(nextDelay);
 }
 
 // ── embedText (called on demand from main process) ────────────────────────────
