@@ -333,6 +333,8 @@ export default function PreviewPanel({
       const tag = document.activeElement?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if (e.key === "Escape" && isFullscreen) {
+        e.preventDefault();
+        e.stopPropagation();
         closeFullscreen();
         return;
       }

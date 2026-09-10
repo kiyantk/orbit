@@ -296,15 +296,19 @@ export default function TimelineOverlay({
 
   const handleMouseDown = useCallback(
     (e) => {
+      // Keep the explorer's drag-select handler from treating a timeline scrub
+      // as the start of a grid selection.
+      e.stopPropagation();
+      e.preventDefault();
       isDraggingRef.current = true;
       scrollToFraction(fractionFromY(e.clientY));
-      e.preventDefault();
     },
     [fractionFromY, scrollToFraction],
   );
 
   const handleClick = useCallback(
     (e) => {
+      e.stopPropagation();
       scrollToFraction(fractionFromY(e.clientY));
     },
     [fractionFromY, scrollToFraction],

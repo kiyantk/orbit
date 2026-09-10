@@ -884,11 +884,19 @@ useEffect(() => {
       .invoke("fetch-timeline-months", {
         filters: filters || {},
         sortOrder: filters?.sortOrder ?? "desc",
+        settings: {
+          hideScreenshotsAndScreenRecordings:
+            !!currentSettings?.hideScreenshotsAndScreenRecordings,
+        },
       })
       .then((data) => {
         if (data?.length) setMonthData(data);
       });
-  }, [filters, currentSettings?.explorerDateScroll]);
+  }, [
+    filters,
+    currentSettings?.explorerDateScroll,
+    currentSettings?.hideScreenshotsAndScreenRecordings,
+  ]);
 
   useEffect(() => {
     const update = () => {

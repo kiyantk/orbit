@@ -4508,9 +4508,10 @@ function applyDriveLetterMap(filePath, map) {
 
 ipcMain.handle(
   "fetch-timeline-months",
-  async (event, { filters = {}, sortOrder = "desc" } = {}) => {
+  async (event, { filters = {}, sortOrder = "desc", settings = {} } = {}) => {
     try {
       initDatabase();
+      settings = settings ?? {};
       const dir = sortOrder === "asc" ? "ASC" : "DESC";
       const datePart = (fmt) => `
       CASE
@@ -4522,7 +4523,9 @@ ipcMain.handle(
           strftime('${fmt}', datetime(MIN(created, modified), 'unixepoch', 'localtime'))
       END
     `;
-      const { sql, params } = buildWhereClause(filters);
+      const { sql, params } = buildWhereClause(filters, {
+        excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
+      });
       return db
         .prepare(
           `
