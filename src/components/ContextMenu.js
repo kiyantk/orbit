@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faArrowRight } from "@fortawesome/free-solid-svg-icons";
 import TagPill from "./TagPill";
@@ -18,6 +18,32 @@ const ContextMenu = ({
   const [tags, setTags] = useState([]);
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [hasEmbedding, setHasEmbedding] = useState(false);
+  const [position, setPosition] = useState({ left: x, top: y });
+
+  useLayoutEffect(() => {
+    const updatePosition = () => {
+      const menu = menuRef.current;
+      if (!menu) return;
+
+      const margin = 8;
+      const left = Math.max(
+        margin,
+        Math.min(x, window.innerWidth - menu.offsetWidth - margin),
+      );
+      const top = Math.max(
+        margin,
+        Math.min(y, window.innerHeight - menu.offsetHeight - margin),
+      );
+
+      setPosition((current) =>
+        current.left === left && current.top === top ? current : { left, top },
+      );
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    return () => window.removeEventListener("resize", updatePosition);
+  }, [x, y, showTags]);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -89,8 +115,8 @@ const ContextMenu = ({
       ref={menuRef}
       style={{
         position: "fixed",
-        top: y,
-        left: x,
+        top: position.top,
+        left: position.left,
         height: "200px",
         backgroundColor: "#1c1a22",
         color: "white",

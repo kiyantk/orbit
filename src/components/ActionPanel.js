@@ -12,6 +12,7 @@ const EMPTY_FILTERS = {
   folder: "",
   filetype: "",
   mediaType: "",
+  captureType: "",
   country: "",
   year: "",
   tagId: "",
@@ -293,6 +294,7 @@ const FilterPanel = ({ filters, options, settings, handlers, onReset }) => {
         ["Device", "device", options.devices],
         ["Filetype", "filetype", options.filetypes],
         ["Media Type", "mediaType", options.mediaTypes],
+        ["Capture Type", "captureType", options.captureTypes],
         ["Lens", "lens", options.lenses],
       ].map(([label, key, opts]) => (
         <div key={key}>
@@ -434,6 +436,7 @@ const ActionPanel = ({
     folders: [],
     filetypes: [],
     mediaTypes: [],
+    captureTypes: [],
     minDate: "",
     maxDate: "",
     countries: [],

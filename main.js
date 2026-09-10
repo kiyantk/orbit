@@ -794,6 +794,7 @@ function buildWhereClause(rawFilters = {}, options = {}) {
   if (filters.folder) add("folder_path = ?", filters.folder);
   if (filters.filetype) add("extension = ?", filters.filetype);
   if (filters.mediaType) add("file_type = ?", filters.mediaType);
+  if (filters.captureType) add("capture_type = ?", filters.captureType);
   if (filters.lens) add("lens_model = ?", filters.lens);
   if (filters.country) {
     add(
@@ -1621,26 +1622,59 @@ async function extractMetadata(filePath) {
   return metadata;
 }
 
-function classifyMediaCapture(_filePath, metadata) {
+function getCapturePathSignals(filePath, fileType) {
+  const sourceText = `${filePath || ""} ${path.basename(filePath || "")}`
+    .toLowerCase()
+    .replace(/[\\/_&-]+/g, " ");
+  const isMixedCameraScreenshotsFolder = /\bcamera\s+(?:and\s+)?screenshots?\b/.test(
+    sourceText,
+  );
+  const hasCameraSource =
+    /\bdcim\b/.test(sourceText) || /\bcamera\b/.test(sourceText);
+  const hasScreenRecordingSource = [
+    "screen recording",
+    "screenrecording",
+    "screen recorder",
+    "screenrecorder",
+    "screen capture",
+    "screencast",
+  ].some((term) => sourceText.includes(term));
+  const hasScreenshotSource =
+    hasScreenRecordingSource ||
+    (fileType === "image" && sourceText.includes("screenshot"));
+
+  return {
+    cameraScore: isMixedCameraScreenshotsFolder ? 6 : hasCameraSource ? 2 : 0,
+    screenScore: hasScreenshotSource ? 5 : 0,
+  };
+}
+
+function classifyMediaCapture(filePath, metadata) {
   const software = String(metadata.software || "").toLowerCase();
+  const pathSignals = getCapturePathSignals(filePath, metadata.file_type);
 
   if (metadata.file_type === "image") {
     const cameraSignals = [
+      metadata.camera_make,
+      metadata.camera_model,
       metadata.lens_model,
       metadata.focal_length,
       metadata.focal_length_35mm,
       metadata.aperture,
       metadata.exposure_time,
       metadata.iso,
+      metadata.flash,
     ].filter((value) => value != null && value !== "").length;
-
-    if (cameraSignals >= 2) return "camera";
-
-    if (cameraSignals === 0) return "screenshot";
 
     const screenshotSoftware =
       software.includes("screenshot") || software.includes("snipping tool");
-    if (screenshotSoftware) return "screenshot";
+
+    const cameraScore =
+      pathSignals.cameraScore + (cameraSignals >= 2 ? 4 : cameraSignals);
+    const screenScore = pathSignals.screenScore + (screenshotSoftware ? 5 : 0);
+
+    if (screenScore > cameraScore) return "screenshot";
+    if (cameraScore >= 2) return "camera";
 
     return "unknown";
   }
@@ -1656,20 +1690,21 @@ function classifyMediaCapture(_filePath, metadata) {
       metadata.aperture,
       metadata.latitude,
       metadata.longitude,
+      metadata.flash,
     ].filter((value) => value != null && value !== "").length;
-
-    if (cameraSignals >= 2) return "camera";
-
-    if (cameraSignals === 0) return "screen_recording";
 
     const screenRecordingSoftware =
       software.includes("screen recording") ||
       software.includes("screen recorder") ||
       software.includes("screenrecord");
 
-    if (screenRecordingSoftware) {
-      return "screen_recording";
-    }
+    const cameraScore =
+      pathSignals.cameraScore + (cameraSignals >= 2 ? 4 : cameraSignals);
+    const screenScore =
+      pathSignals.screenScore + (screenRecordingSoftware ? 5 : 0);
+
+    if (screenScore > cameraScore) return "screen_recording";
+    if (cameraScore >= 2) return "camera";
 
     return "unknown";
   }
@@ -1883,6 +1918,12 @@ ipcMain.handle("fetch-options", async (event, { birthDate = null }) => {
       )
       .all()
       .map((r) => r.file_type);
+    const captureTypes = db
+      .prepare(
+        "SELECT DISTINCT capture_type FROM files WHERE capture_type IS NOT NULL AND TRIM(capture_type) != ''",
+      )
+      .all()
+      .map((r) => r.capture_type);
     const countriesRaw = db
       .prepare("SELECT country FROM files WHERE country IS NOT NULL")
       .all()
@@ -1957,6 +1998,7 @@ ipcMain.handle("fetch-options", async (event, { birthDate = null }) => {
       folders,
       filetypes,
       mediaTypes,
+      captureTypes,
       countries,
       minDate,
       maxDate,
@@ -1972,6 +2014,7 @@ ipcMain.handle("fetch-options", async (event, { birthDate = null }) => {
       folders: [],
       filetypes: [],
       mediaTypes: [],
+      captureTypes: [],
       countries: [],
       minDate: "",
       maxDate: "",
@@ -2046,22 +2089,22 @@ ipcMain.handle("detect-screenshots", async () => {
         `
           SELECT id, path, file_type, device_model, camera_make, camera_model,
                  lens_model, focal_length, focal_length_35mm, aperture,
-                 exposure_time, iso, latitude, longitude, software
+                 exposure_time, iso, latitude, longitude, flash, software
           FROM files
-          WHERE capture_type IS NULL OR TRIM(capture_type) = '' OR capture_type = 'unknown'
+          WHERE file_type IN ('image', 'video')
         `,
       )
       .all();
 
     if (rows.length === 0) {
-      return { success: true, message: "Capture types are already detected." };
+      return { success: true, message: "No images or videos found to classify." };
     }
 
     const updateStmt = db.prepare(
       `
         UPDATE files
         SET capture_type = ?
-        WHERE id = ? AND (capture_type IS NULL OR TRIM(capture_type) = '' OR capture_type = 'unknown')
+        WHERE id = ?
       `,
     );
     const updateMany = db.transaction((files) => {
@@ -2079,9 +2122,10 @@ ipcMain.handle("detect-screenshots", async () => {
     const recordings = rows.filter(
       (file) => file.capture_type === "screen_recording",
     ).length;
+    const camera = rows.filter((file) => file.capture_type === "camera").length;
     return {
       success: true,
-      message: `Detected capture types for ${rows.length} files (${screenshots} screenshots, ${recordings} screen recordings).`,
+      message: `Detected capture types for ${rows.length} files (${camera} camera, ${screenshots} screenshots, ${recordings} screen recordings).`,
     };
   } catch (err) {
     console.error("Error detecting capture types:", err);

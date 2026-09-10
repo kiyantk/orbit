@@ -573,7 +573,7 @@ const SettingsView = ({
     });
   const fixIDs = () => runTool("fix-media-ids", "Fixing media IDs");
   const detectScreenshots = () =>
-    runTool("detect-screenshots", "Detecting capture types");
+    runTool("detect-screenshots", "Re-detecting capture types");
   const cleanupThumbnails = () =>
     runTool("cleanup-thumbnails", "Scanning for orphaned thumbnails");
 
@@ -1438,7 +1438,7 @@ const SettingsView = ({
                 },
               },
               {
-                label: "Detect capture types",
+                label: "Re-detect capture types",
                 action: () => {
                   setShowToolsPopup(false);
                   detectScreenshots();

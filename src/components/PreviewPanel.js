@@ -201,6 +201,7 @@ export default function PreviewPanel({
   const [isSeeking, setIsSeeking] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [mediaUnavailable, setMediaUnavailable] = useState(false);
   const [itemCountry, setItemCountry] = useState(null);
   const [itemPlace, setItemPlace] = useState(null);
   const [zoom, setZoom] = useState(1);
@@ -258,6 +259,7 @@ export default function PreviewPanel({
     setCurrentTime(0);
     setIsPlaying(true);
     setIsLoading(true);
+    setMediaUnavailable(false);
 
     setItemCountry("");
     setItemPlace("");
@@ -360,6 +362,12 @@ export default function PreviewPanel({
     else safePlay(currentVideoRef.current);
     setIsPlaying((p) => !p);
   };
+
+  const handleMediaError = useCallback(() => {
+    setIsLoading(false);
+    setMediaUnavailable(true);
+    setIsFullscreen(false);
+  }, []);
 
   // ── Seek ───────────────────────────────────────────────────────────────────
 
@@ -476,7 +484,7 @@ export default function PreviewPanel({
   return (
     <div className="p-4 space-y- preview-panel-wrapper">
       {/* ── Media preview ── */}
-      {selectedItemAvailable === false ? (
+      {selectedItemAvailable === false || mediaUnavailable ? (
         <div className="flex justify-center items-center preview-panel-content text-gray-400 text-sm">
           Item could not be found
         </div>
@@ -502,6 +510,7 @@ export default function PreviewPanel({
                 loop
                 className={`video-element ${isLoading ? "hidden" : ""}`}
                 onLoadedData={() => setIsLoading(false)}
+                onError={handleMediaError}
                 data-visualfilter={currentSettings?.mediaFilter ?? "none"}
               />
               {isHovered && (
@@ -520,6 +529,7 @@ export default function PreviewPanel({
               className={`normal-image max-h-[500px] object-contain rounded-lg bg-gray-200 ${isLoading ? "hidden" : ""} ${heicClass}`}
               onClick={openFullscreen}
               onLoad={() => setIsLoading(false)}
+              onError={handleMediaError}
               data-visualfilter={currentSettings?.mediaFilter ?? "none"}
             />
           )}
@@ -676,6 +686,7 @@ export default function PreviewPanel({
                   muted={isMuted}
                   loop
                   className="video-element"
+                  onError={handleMediaError}
                   data-visualfilter={currentSettings?.mediaFilter ?? "none"}
                 />
                 {(isHovered || isSeeking) && (
@@ -705,6 +716,7 @@ export default function PreviewPanel({
                   setZoom(1);
                   setOffset({ x: 0, y: 0 });
                 }}
+                onError={handleMediaError}
                 data-visualfilter={currentSettings?.mediaFilter ?? "none"}
               />
             )}
