@@ -358,7 +358,16 @@ const App = () => {
             />
           )}
           {activeView === "stats" && (
-            <StatsView birthDate={settings.birthDate} currentSettings={settings} />
+            <StatsView
+              birthDate={settings.birthDate}
+              currentSettings={settings}
+              onRevealItem={(item) => {
+                setFilters({});
+                setExplorerScroll(0);
+                setActiveView("explore");
+                setItemToReveal(item);
+              }}
+            />
           )}
           {activeView === "map" && (
             <MapView mapViewType={mapViewType} filters={mapFilters} currentSettings={settings} onRevealItem={revealItemInExplorer} />

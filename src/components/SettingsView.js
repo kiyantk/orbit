@@ -891,6 +891,19 @@ const SettingsView = ({
                   <option value="tall">Tall</option>
                 </select>
               </SettingsRow>
+              <SettingsRow>
+                <div className="slider-wrapper">
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={!!settings.excludeScreenCapturesFromMilestones}
+                      onChange={handleCheckbox("excludeScreenCapturesFromMilestones")}
+                    />
+                    <div className="slider round"></div>
+                  </label>
+                </div>
+                <span>Exclude screenshots & screen recordings from Milestones</span>
+              </SettingsRow>
             </div>
           )}
 

@@ -434,6 +434,7 @@ const defaultConfig = {
   tableStyle: "comfortable",
   mediaFilter: "none",
   hideScreenshotsAndScreenRecordings: false,
+  excludeScreenCapturesFromMilestones: false,
   driveLetterMap: {},
 };
 
@@ -1626,6 +1627,7 @@ function getCapturePathSignals(filePath, fileType) {
   const sourceText = `${filePath || ""} ${path.basename(filePath || "")}`
     .toLowerCase()
     .replace(/[\\/_&-]+/g, " ");
+  const extension = path.extname(filePath || "").toLowerCase();
   const isMixedCameraScreenshotsFolder = /\bcamera\s+(?:and\s+)?screenshots?\b/.test(
     sourceText,
   );
@@ -1642,10 +1644,24 @@ function getCapturePathSignals(filePath, fileType) {
   const hasScreenshotSource =
     hasScreenRecordingSource ||
     (fileType === "image" && sourceText.includes("screenshot"));
+  const isScreenshotFormat = fileType === "image" && extension === ".png";
+  const isPhotographicFormat =
+    fileType === "image" &&
+    [".heic", ".heif", ".jpg", ".jpeg", ".dng", ".raw"].includes(
+      extension,
+    );
+
+  // "Camera & Screenshots" is a mixed source. Its screenshot term is only a
+  // weak hint, while a PNG remains strong evidence for a screenshot.
+  const screenshotPathScore = hasScreenshotSource
+    ? isMixedCameraScreenshotsFolder
+      ? 1
+      : 5
+    : 0;
 
   return {
-    cameraScore: isMixedCameraScreenshotsFolder ? 6 : hasCameraSource ? 2 : 0,
-    screenScore: hasScreenshotSource ? 5 : 0,
+    cameraScore: (hasCameraSource ? 2 : 0) + (isPhotographicFormat ? 2 : 0),
+    screenScore: screenshotPathScore + (isScreenshotFormat ? 5 : 0),
   };
 }
 
@@ -2617,13 +2633,23 @@ ipcMain.handle("get-index-of-item", async (event, { itemId, settings = {} }) => 
   try {
     if (!db) return null;
     settings = settings ?? {};
+    const visibilityFilter = settings.hideScreenshotsAndScreenRecordings
+      ? "COALESCE(capture_type, '') NOT IN ('screenshot', 'screen_recording')"
+      : "1 = 1";
+
+    // Do not calculate an index for an item the Explorer deliberately excludes.
+    // Without this check, its position can point at the following visible item.
+    const target = db
+      .prepare(`SELECT 1 FROM files WHERE media_id = ? AND ${visibilityFilter}`)
+      .get(itemId);
+    if (!target) return null;
 
     // Use media_id for a stable, deterministic descending sort (newest first)
     const stmt = db.prepare(`
       SELECT COUNT(*) as idx
       FROM files
       WHERE media_id > ?
-        ${settings.hideScreenshotsAndScreenRecordings ? "AND COALESCE(capture_type, '') NOT IN ('screenshot', 'screen_recording')" : ""}
+        AND ${visibilityFilter}
     `);
 
     const row = stmt.get(itemId);
@@ -4633,11 +4659,20 @@ ipcMain.handle("create-backup", async (event, filename) => {
   }
 });
 
-ipcMain.handle("fetch-milestones", async () => {
+ipcMain.handle(
+  "fetch-milestones",
+  async (event, { excludeScreenCaptures = false } = {}) => {
   try {
     initDatabase();
 
     const hasDate = `(create_date_local IS NOT NULL OR create_date IS NOT NULL OR created IS NOT NULL OR modified IS NOT NULL)`;
+    const captureFilter = excludeScreenCaptures
+      ? "COALESCE(NULLIF(TRIM(capture_type), ''), 'unknown') IN ('camera', 'unknown')"
+      : null;
+    const captureWhere = captureFilter ? `WHERE ${captureFilter}` : "";
+    const datedCaptureWhere = captureFilter
+      ? `WHERE ${captureFilter} AND ${hasDate}`
+      : `WHERE ${hasDate}`;
     const dateExpr = `
       CASE
         WHEN create_date_local IS NOT NULL THEN create_date_local
@@ -4646,8 +4681,11 @@ ipcMain.handle("fetch-milestones", async () => {
       END
     `;
 
-    const maxRow = db.prepare(`SELECT MAX(media_id) as maxId FROM files`).get();
-    const currentMax = maxRow?.maxId || 0;
+    const currentMax = excludeScreenCaptures
+      ? db.prepare(`SELECT COUNT(*) as count FROM files ${captureWhere}`).get()
+          ?.count || 0
+      : db.prepare(`SELECT MAX(media_id) as maxId FROM files`).get()?.maxId ||
+        0;
 
     if (currentMax === 0) {
       return { success: true, achieved: [], upcoming: [], currentMax: 0 };
@@ -4663,21 +4701,40 @@ ipcMain.handle("fetch-milestones", async () => {
     const achievedThresholds = milestoneSet.filter((m) => m <= currentMax);
     const upcomingThresholds = milestoneSet.filter((m) => m > currentMax).slice(0, 8);
 
-    // --- Achieved: look up the actual date each milestone media_id was created ---
+    // --- Achieved: look up the item that reaches each milestone ---
     const achieved = [];
     if (achievedThresholds.length) {
-      const placeholders = achievedThresholds.map(() => "?").join(",");
-      const rows = db
-        .prepare(`SELECT media_id, ${dateExpr} AS date FROM files WHERE media_id IN (${placeholders})`)
-        .all(...achievedThresholds);
-      const rowMap = Object.fromEntries(rows.map((r) => [r.media_id, r.date]));
-      for (const m of achievedThresholds) {
-        achieved.push({ milestone: m, date: rowMap[m] || null });
+      const selectFields = `id, media_id, filename, thumbnail_path, ${dateExpr} AS date`;
+      const rows = excludeScreenCaptures
+        ? (() => {
+            const milestoneItemStmt = db.prepare(
+              `SELECT ${selectFields} FROM files ${captureWhere} ORDER BY media_id ASC LIMIT 1 OFFSET ?`,
+            );
+            return achievedThresholds.map((milestone) =>
+              milestoneItemStmt.get(milestone - 1),
+            );
+          })()
+        : db
+            .prepare(
+              `SELECT ${selectFields} FROM files WHERE media_id IN (${achievedThresholds.map(() => "?").join(",")})`,
+            )
+            .all(...achievedThresholds);
+      for (const [index, m] of achievedThresholds.entries()) {
+        const item = excludeScreenCaptures
+          ? rows[index]
+          : rows.find((row) => row.media_id === m);
+        achieved.push({
+          milestone: m,
+          date: item?.date || null,
+          item: item || null,
+        });
       }
     }
 
     // --- Growth rate: weekly counts (zero-filled) -> EWMA, spike-capped ---
-    const dateRows = db.prepare(`SELECT ${dateExpr} AS date FROM files WHERE ${hasDate}`).all();
+    const dateRows = db
+      .prepare(`SELECT ${dateExpr} AS date FROM files ${datedCaptureWhere}`)
+      .all();
 
     let weeklyRate = 0;
     if (dateRows.length > 1) {
@@ -4731,7 +4788,8 @@ ipcMain.handle("fetch-milestones", async () => {
     console.error("fetch-milestones error:", err);
     return { success: false, error: err.message, achieved: [], upcoming: [] };
   }
-});
+  },
+);
 
 ipcMain.handle("toggle-fullscreen", () => {
   if (mainWindow) mainWindow.setFullScreen(!mainWindow.isFullScreen());

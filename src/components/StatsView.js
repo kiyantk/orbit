@@ -29,12 +29,13 @@ ChartJS.register(
   zoomPlugin,
 );
 
-const StatsView = ({ birthDate, currentSettings }) => {
+const StatsView = ({ birthDate, currentSettings, onRevealItem }) => {
   const [stats, setStats] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
   const [loading, setLoading] = useState(true);
   const [milestones, setMilestones] = useState(null);
+  const [milestoneView, setMilestoneView] = useState("table");
 
   const handleChangeYear = useCallback((offset) => {
     setCalendarYear((prev) => prev + offset);
@@ -60,15 +61,20 @@ const StatsView = ({ birthDate, currentSettings }) => {
   useEffect(() => {
     const fetchMilestones = async () => {
       try {
-        const res =
-          await window.electron.ipcRenderer.invoke("fetch-milestones");
+        const res = await window.electron.ipcRenderer.invoke(
+          "fetch-milestones",
+          {
+            excludeScreenCaptures:
+              !!currentSettings?.excludeScreenCapturesFromMilestones,
+          },
+        );
         if (res.success) setMilestones(res);
       } catch (err) {
         console.error("Failed to fetch milestones", err);
       }
     };
     fetchMilestones();
-  }, []);
+  }, [currentSettings?.excludeScreenCapturesFromMilestones]);
 
   // Derive calendar data and streaks from the lightweight allDays array
   const calendarData = useMemo(() => {
@@ -525,10 +531,31 @@ const StatsView = ({ birthDate, currentSettings }) => {
           </div>
         )}
         {activeTab === "milestones" && (
-          <div className="stats-card-wrapper">
+          <div className="stats-card-wrapper milestones-card-wrapper">
             <h3>Milestones</h3>
+            <div className="milestones-view-tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={milestoneView === "table"}
+                className={milestoneView === "table" ? "active" : ""}
+                onClick={() => setMilestoneView("table")}
+              >
+                Table
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={milestoneView === "gallery"}
+                className={milestoneView === "gallery" ? "active" : ""}
+                onClick={() => setMilestoneView("gallery")}
+              >
+                Gallery
+              </button>
+            </div>
 
-            <div className="stats-card">
+            {milestoneView === "table" ? (
+              <div className="stats-card">
               <table>
                 <thead>
                   <tr>
@@ -570,6 +597,36 @@ const StatsView = ({ birthDate, currentSettings }) => {
                 </table>
               </div>
             </div>
+            ) : (
+              <div className="milestones-gallery">
+                {milestones?.achieved?.filter((m) => m.item)?.map((m) => (
+                  <button
+                    key={`gallery-${m.milestone}`}
+                    type="button"
+                    className="milestone-gallery-item"
+                    onClick={() => onRevealItem?.(m.item)}
+                    title={`View milestone ${m.milestone.toLocaleString()} in Explorer`}
+                  >
+                    {m.item.thumbnail_path ? (
+                      <img
+                        src={`orbit://thumbs/${m.item.id}_thumb.jpg`}
+                        alt={m.item.filename}
+                        draggable={false}
+                      />
+                    ) : (
+                      <span className="milestone-gallery-no-preview">No preview</span>
+                    )}
+                    <span className="milestone-gallery-overlay">
+                      <strong>{m.milestone.toLocaleString()}</strong>
+                      <span>{formatMilestoneDate(m.date)}</span>
+                    </span>
+                  </button>
+                ))}
+                {!milestones?.achieved?.some((m) => m.item) && (
+                  <div className="milestone-gallery-empty">No achieved milestones yet.</div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

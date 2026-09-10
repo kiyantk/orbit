@@ -1134,7 +1134,14 @@ useEffect(() => {
         "get-index-of-item",
         { itemId: item.media_id, settings: currentSettings || {} },
       );
-      if (itemIndex == null || cancelled) return;
+      if (cancelled) return;
+      if (itemIndex == null) {
+        enqueueSnackbar("This item is hidden by the current Explorer settings.");
+        setSelectedItem(null);
+        onSelect(null, "single");
+        setItemToReveal(null);
+        return;
+      }
 
       const pageIndex = Math.floor(itemIndex / PAGE_SIZE);
       const res = await window.electron.ipcRenderer.invoke("fetch-files", {
