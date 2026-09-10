@@ -201,6 +201,8 @@ export default function PreviewPanel({
   const [isSeeking, setIsSeeking] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isFullscreenMediaLoading, setIsFullscreenMediaLoading] =
+    useState(true);
   const [mediaUnavailable, setMediaUnavailable] = useState(false);
   const [itemCountry, setItemCountry] = useState(null);
   const [itemPlace, setItemPlace] = useState(null);
@@ -223,6 +225,15 @@ export default function PreviewPanel({
   const fileUrl = item
     ? `http://localhost:54055/files/${encodeURIComponent(item.path)}`
     : null;
+  const thumbnailUrl = item?.thumbnail_path
+    ? `orbit://thumbs/${item.id}_thumb.jpg`
+    : null;
+  const showThumbnailWhileLoading =
+    currentSettings?.showThumbnailWhileFullImageLoads ?? false;
+  const useUnavailableThumbnail =
+    selectedItemAvailable === false &&
+    currentSettings?.unavailableBehaviour === "thumbnail" &&
+    thumbnailUrl;
   const heicClass =
     currentSettings?.adjustHeicColors && item?.extension === ".heic"
       ? "heic-color-adjust"
@@ -259,6 +270,7 @@ export default function PreviewPanel({
     setCurrentTime(0);
     setIsPlaying(true);
     setIsLoading(true);
+    setIsFullscreenMediaLoading(true);
     setMediaUnavailable(false);
 
     setItemCountry("");
@@ -405,6 +417,7 @@ export default function PreviewPanel({
 
   const openFullscreen = () => {
     setIsFullscreen(true);
+    setIsFullscreenMediaLoading(true);
     setZoom(1);
     setOffset({ x: 0, y: 0 });
     if (isVideo && videoRefNormal.current) {
@@ -486,24 +499,41 @@ export default function PreviewPanel({
   return (
     <div className="p-4 space-y- preview-panel-wrapper">
       {/* ── Media preview ── */}
-      {selectedItemAvailable === false || mediaUnavailable ? (
+      {(selectedItemAvailable === false && !useUnavailableThumbnail) ||
+      mediaUnavailable ? (
         <div className="flex justify-center items-center preview-panel-content text-gray-400 text-sm">
           Item could not be found
         </div>
       ) : (
         <div className="flex justify-center preview-panel-content">
-          {isLoading && (
-            <div className="absolute inset-0 flex justify-center items-center bg-black/50 z-10">
+          {isLoading && !useUnavailableThumbnail && (
+            <div className="preview-media-loader" aria-label="Loading media">
               <div className="loader" />
             </div>
           )}
 
-          {isVideo ? (
+          {useUnavailableThumbnail ? (
+            <img
+              src={thumbnailUrl}
+              alt={item.filename}
+              className="normal-image max-h-[500px] object-contain rounded-lg bg-gray-200 preview-thumbnail"
+              data-visualfilter={currentSettings?.mediaFilter ?? "none"}
+            />
+          ) : isVideo ? (
             <div
               className="video-wrapper"
               onMouseEnter={() => !isSeeking && setIsHovered(true)}
               onMouseLeave={() => !isSeeking && setIsHovered(false)}
             >
+              {isLoading && showThumbnailWhileLoading && thumbnailUrl && (
+                <img
+                  src={thumbnailUrl}
+                  alt=""
+                  aria-hidden="true"
+                  className="normal-image max-h-[500px] object-contain rounded-lg bg-gray-200 preview-thumbnail"
+                  data-visualfilter={currentSettings?.mediaFilter ?? "none"}
+                />
+              )}
               <video
                 ref={videoRefNormal}
                 src={fileUrl}
@@ -525,15 +555,26 @@ export default function PreviewPanel({
               )}
             </div>
           ) : (
-            <img
-              src={fileUrl}
-              alt={item.filename}
-              className={`normal-image max-h-[500px] object-contain rounded-lg bg-gray-200 ${isLoading ? "hidden" : ""} ${heicClass}`}
-              onClick={openFullscreen}
-              onLoad={() => setIsLoading(false)}
-              onError={handleMediaError}
-              data-visualfilter={currentSettings?.mediaFilter ?? "none"}
-            />
+            <>
+              {isLoading && showThumbnailWhileLoading && thumbnailUrl && (
+                <img
+                  src={thumbnailUrl}
+                  alt={item.filename}
+                  className="normal-image max-h-[500px] object-contain rounded-lg bg-gray-200 preview-thumbnail"
+                  onClick={openFullscreen}
+                  data-visualfilter={currentSettings?.mediaFilter ?? "none"}
+                />
+              )}
+              <img
+                src={fileUrl}
+                alt={item.filename}
+                className={`normal-image max-h-[500px] object-contain rounded-lg bg-gray-200 ${isLoading ? "hidden" : ""} ${heicClass}`}
+                onClick={openFullscreen}
+                onLoad={() => setIsLoading(false)}
+                onError={handleMediaError}
+                data-visualfilter={currentSettings?.mediaFilter ?? "none"}
+              />
+            </>
           )}
         </div>
       )}
@@ -667,7 +708,6 @@ export default function PreviewPanel({
         <div className="fullscreen-overlay" onClick={closeFullscreen}>
           <div
             className="fullscreen-content"
-            onClick={(e) => e.stopPropagation()}
           >
             <button className="fullscreen-close" onClick={closeFullscreen}>
               <FontAwesomeIcon icon={faXmark} />
@@ -675,10 +715,25 @@ export default function PreviewPanel({
 
             {isVideo ? (
               <div
-                className="video-wrapper fullscreen-video"
+                className={`video-wrapper fullscreen-video ${isFullscreenMediaLoading ? "fullscreen-video-loading" : ""}`}
+                onClick={(e) => {
+                  if (e.target === e.currentTarget) closeFullscreen();
+                  else e.stopPropagation();
+                }}
                 onMouseEnter={() => !isSeeking && setIsHovered(true)}
                 onMouseLeave={() => !isSeeking && setIsHovered(false)}
               >
+                {isFullscreenMediaLoading &&
+                  showThumbnailWhileLoading &&
+                  thumbnailUrl && (
+                    <img
+                      src={thumbnailUrl}
+                      alt=""
+                      aria-hidden="true"
+                      className="fullscreen-video-thumbnail preview-thumbnail"
+                      data-visualfilter={currentSettings?.mediaFilter ?? "none"}
+                    />
+                  )}
                 <video
                   ref={videoRefFullscreen}
                   src={fileUrl}
@@ -687,7 +742,8 @@ export default function PreviewPanel({
                   autoPlay
                   muted={isMuted}
                   loop
-                  className="video-element"
+                  className={`video-element ${isFullscreenMediaLoading ? "hidden" : ""}`}
+                  onLoadedData={() => setIsFullscreenMediaLoading(false)}
                   onError={handleMediaError}
                   data-visualfilter={currentSettings?.mediaFilter ?? "none"}
                 />
@@ -700,29 +756,54 @@ export default function PreviewPanel({
                 )}
               </div>
             ) : (
-              <img
-                ref={imgRef}
-                src={fileUrl}
-                alt={item.filename}
-                className={`fullscreen-image ${heicClass}`}
-                style={{
-                  transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
-                  cursor: zoom > 1 ? "grab" : "auto",
-                  transition: lastMousePos.current
-                    ? "none"
-                    : "transform 0.1s ease-out",
+              <div
+                className="fullscreen-image-container"
+                onClick={(e) => {
+                  if (e.target === e.currentTarget) closeFullscreen();
+                  else e.stopPropagation();
                 }}
-                onWheel={handleWheel}
-                onMouseDown={zoom > 1 ? handleMouseDown : undefined}
-                onDoubleClick={() => {
-                  setZoom(1);
-                  setOffset({ x: 0, y: 0 });
-                }}
-                onError={handleMediaError}
-                data-visualfilter={currentSettings?.mediaFilter ?? "none"}
-              />
+              >
+                {isFullscreenMediaLoading &&
+                  showThumbnailWhileLoading &&
+                  thumbnailUrl && (
+                    <img
+                      src={thumbnailUrl}
+                      alt=""
+                      aria-hidden="true"
+                      className="fullscreen-image preview-thumbnail"
+                      data-visualfilter={currentSettings?.mediaFilter ?? "none"}
+                    />
+                  )}
+                <img
+                  ref={imgRef}
+                  src={fileUrl}
+                  alt={item.filename}
+                  className={`fullscreen-image ${isFullscreenMediaLoading ? "hidden" : ""} ${heicClass}`}
+                  style={{
+                    transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
+                    cursor: zoom > 1 ? "grab" : "auto",
+                    transition: lastMousePos.current
+                      ? "none"
+                      : "transform 0.1s ease-out",
+                  }}
+                  onLoad={() => setIsFullscreenMediaLoading(false)}
+                  onWheel={handleWheel}
+                  onMouseDown={zoom > 1 ? handleMouseDown : undefined}
+                  onDoubleClick={() => {
+                    setZoom(1);
+                    setOffset({ x: 0, y: 0 });
+                  }}
+                  onError={handleMediaError}
+                  data-visualfilter={currentSettings?.mediaFilter ?? "none"}
+                />
+              </div>
             )}
           </div>
+          {isFullscreenMediaLoading && (
+            <div className="fullscreen-image-loader" aria-label="Loading image">
+              <div className="loader" />
+            </div>
+          )}
         </div>
       )}
     </div>

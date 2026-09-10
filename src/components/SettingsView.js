@@ -734,6 +734,34 @@ const SettingsView = ({
                 </span>
               </SettingsRow>
               <SettingsRow>
+                <div className="slider-wrapper">
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={settings.showThumbnailWhileFullImageLoads ?? false}
+                      onChange={handleCheckbox(
+                        "showThumbnailWhileFullImageLoads",
+                      )}
+                    />
+                    <div className="slider round"></div>
+                  </label>
+                </div>
+                <span>Show thumbnail while full image loads</span>
+              </SettingsRow>
+              <SettingsRow>
+                <span>Unavailable behaviour:</span>
+                <select
+                  value={settings.unavailableBehaviour ?? "overlay"}
+                  onChange={handleSelect("unavailableBehaviour")}
+                  className="settings-itemstyle-select"
+                >
+                  <option value="overlay">
+                    Show overlay &amp; don't load (default)
+                  </option>
+                  <option value="thumbnail">Use thumbnail</option>
+                </select>
+              </SettingsRow>
+              <SettingsRow>
                 <span>Default sort:</span>
                 <select
                   value={settings.defaultSort ?? "media_id"}

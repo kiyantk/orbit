@@ -423,6 +423,8 @@ const defaultConfig = {
   itemText: "filename", // "filename", "datetime" or "none"
   noGutters: false,
   preloadHeic: false,
+  showThumbnailWhileFullImageLoads: false,
+  unavailableBehaviour: "overlay", // "overlay" or "thumbnail"
   memoriesLayout: "list",
   placesSortBy: "count",
   placesThumbnails: "random",

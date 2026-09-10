@@ -87,6 +87,8 @@ const Cell = React.memo(
     const thumbSrc = item.thumbnail_path
       ? `orbit://thumbs/${item.id}_thumb.jpg`
       : null;
+    const useUnavailableThumbnail =
+      currentSettings?.unavailableBehaviour === "thumbnail";
     const isNoGutterNoText = noGutters && currentSettings?.itemText === "none";
     const hideText = scale <= 0.5 || currentSettings?.itemText === "none";
 
@@ -168,7 +170,7 @@ const Cell = React.memo(
             </div>
           )}
 
-          {!folderAvailable && (
+          {!folderAvailable && !useUnavailableThumbnail && (
             <div className="thumb-video-unavailable">Unavailable</div>
           )}
         </div>
