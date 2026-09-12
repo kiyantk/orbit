@@ -1082,7 +1082,9 @@ select:disabled {
 
 .preview-panel-content {
   /* height: 562px; */
-  align-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   position: relative;
   user-select: none;
 }
@@ -1093,7 +1095,7 @@ select:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
+  /* background: rgba(0, 0, 0, 0.5); */
   pointer-events: none;
   z-index: 10;
 }
@@ -1535,7 +1537,6 @@ select:focus {
   left: 110%;
   top: 50%;
   transform: translateY(-50%);
-  background: #09001e;
   color: #fff;
   padding: 6px 10px;
   border-radius: 6px;
@@ -1546,6 +1547,11 @@ select:focus {
   transition:
     opacity 0.15s ease,
     transform 0.15s ease;
+  background: linear-gradient(rgb(32 29 39 / 92%), rgba(20, 18, 26, 0.95)) padding-box;
+  border: var(--glass-border) solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness)) contrast(var(--glass-contrast));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness)) contrast(var(--glass-contrast));
+  box-shadow: 0px 0.5px 0.6px rgba(0, 0, 0, .06), 0px 1.8px 2.3px rgba(0, 0, 0, .07), 0px 4.2px 5.3px rgba(0, 0, 0, .09), 0px 9.7px 12.1px rgba(0, 0, 0, .12);
 }
 
 .side-bar-btn:hover .tooltip {
@@ -2261,6 +2267,32 @@ input[type="checkbox"] {
   font-weight: 500;
 }
 
+.smart-search-status-counts-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 27px;
+}
+
+.smart-search-status-button {
+  background: #2b272e;
+  border: 1px solid #3c3741;
+  border-radius: 4px;
+  color: #ddd;
+  cursor: pointer;
+  font-size: 11px;
+  min-width: 62px;
+  padding: 3px 8px;
+}
+
+.smart-search-status-button:hover:not(:disabled) {
+  background: #3c3741;
+}
+
+.smart-search-status-button:disabled {
+  opacity: 0.55;
+}
+
 /* Progress bar track */
 .smart-search-status-bar-track {
   height: 5px;
@@ -2279,14 +2311,8 @@ input[type="checkbox"] {
 }
 
 .smart-search-status-counts {
-  font-size: 11px;
+  font-size: 12px;
   color: #666;
-}
-
-.smart-search-status-info {
-  font-size: 11px;
-  color: #555;
-  line-height: 1.4;
 }
 
 .smart-search-status-error {

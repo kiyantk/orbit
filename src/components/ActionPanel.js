@@ -533,9 +533,7 @@ const ActionPanel = ({
     const handler = (data) => {
       if (data) setSmartSearchStatus(data);
     };
-    window.electron.ipcRenderer.on("embedding-progress", handler);
-    return () =>
-      window.electron.ipcRenderer.removeListener("embedding-progress", handler);
+    return window.electron.ipcRenderer.on("embedding-progress", handler);
   }, []);
 
   // ── Auto-apply on state change ─────────────────────────────────────────────

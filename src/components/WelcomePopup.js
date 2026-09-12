@@ -127,14 +127,7 @@ const WelcomePopup = ({ submitWelcomePopup }) => {
       }
     };
 
-    window.electron.ipcRenderer.on("indexing-progress", handleProgress);
-
-    return () => {
-      window.electron.ipcRenderer.removeListener(
-        "indexing-progress",
-        handleProgress,
-      );
-    };
+    return window.electron.ipcRenderer.on("indexing-progress", handleProgress);
   }, []);
 
   return (

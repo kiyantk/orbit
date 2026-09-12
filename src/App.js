@@ -302,9 +302,9 @@ const App = () => {
     setActionPanelKey(actionPanelKey + 1);
   };
 
-  const handleItemDeleted = () => {
-    setActionPanelKey(actionPanelKey + 1);
-  };
+  const handleItemDeleted = useCallback(() => {
+    setActionPanelKey((key) => key + 1);
+  }, []);
 
   const handleFindSimilar = async (item) => {
     setExplorerLoading(true);

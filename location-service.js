@@ -30,6 +30,7 @@ class LocationService {
     this._total  = 0;
     this._done   = 0;
     this._paused = false;
+    this._pausePending = false;
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
@@ -39,13 +40,22 @@ class LocationService {
     this._spawnWorker();
   }
 
+  setInitialPaused(paused) {
+    this._paused = paused;
+    this._pausePending = false;
+  }
+
   pause() {
+    if (this._paused && this._pausePending) return;
     this._paused = true;
+    this._pausePending = true;
     this._worker?.postMessage({ type: "pause" });
   }
 
   resume() {
+    if (!this._paused && this._pausePending) return;
     this._paused = false;
+    this._pausePending = true;
     this._worker?.postMessage({ type: "resume" });
   }
 
@@ -67,6 +77,7 @@ class LocationService {
       total:      this._total,
       done:       this._done,
       paused:     this._paused,
+      pausePending: this._pausePending,
       stopped:    this._stopped,
       percentage: this._total > 0
         ? Math.round((this._done / this._total) * 100)
@@ -99,6 +110,9 @@ class LocationService {
       geoDbPath:  this._geoDbPath,
       dataDir:    this._dataDir,
     });
+
+    // A replacement worker starts unpaused. Preserve an explicit user pause.
+    if (this._paused) this._worker.postMessage({ type: "pause" });
   }
 
   _handleWorkerMessage(msg) {
@@ -107,14 +121,18 @@ class LocationService {
       case "progress": {
         this._total  = msg.total;
         this._done   = msg.done;
-        this._paused = msg.paused;
+        if (!this._pausePending || msg.paused === this._paused) {
+          this._paused = msg.paused;
+          this._pausePending = false;
+        }
 
         const win = this._getMainWindow();
         if (win && !win.isDestroyed()) {
           win.webContents.send("location-progress", {
             total:      msg.total,
             done:       msg.done,
-            paused:     msg.paused,
+            paused:     this._paused,
+            pausePending: this._pausePending,
             percentage: msg.percentage,
           });
         }

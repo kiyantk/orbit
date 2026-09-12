@@ -338,12 +338,14 @@ parentPort.on("message", (msg) => {
     case "pause":
       paused = true;
       log("info", "paused");
+      emitProgress();
       break;
 
     case "resume":
       if (paused) {
         paused = false;
         log("info", "resumed");
+        emitProgress();
         scheduleLoop(100);
       }
       break;

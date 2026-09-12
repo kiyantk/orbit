@@ -168,8 +168,10 @@ const SmartSearchStatus = () => {
     done: 0,
     percentage: 0,
     paused: false,
+    pausePending: false,
   });
   const [loading, setLoading] = useState(true);
+  const [isToggling, setIsToggling] = useState(false);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -177,9 +179,27 @@ const SmartSearchStatus = () => {
         "embedding:get-status",
       );
       if (s) setStatus(s);
-    } catch {}
-    setLoading(false);
+      return s;
+    } catch {
+      return null;
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  const togglePaused = useCallback(async () => {
+    if (isToggling || status.pausePending) return;
+    setIsToggling(true);
+    try {
+      await window.electron.ipcRenderer.invoke(
+        status.paused ? "embedding:resume" : "embedding:pause",
+      );
+      const nextStatus = await fetchStatus();
+      if (!nextStatus?.pausePending) setIsToggling(false);
+    } catch {
+      setIsToggling(false);
+    }
+  }, [isToggling, status.paused, status.pausePending, fetchStatus]);
 
   // Poll every 4 seconds
   useEffect(() => {
@@ -191,12 +211,13 @@ const SmartSearchStatus = () => {
   // Also listen for push updates from the background service
   useEffect(() => {
     const handler = (data) => {
-      if (data) setStatus(data);
+      if (data) {
+        setStatus(data);
+        if (!data.pausePending) setIsToggling(false);
+      }
       setLoading(false);
     };
-    window.electron.ipcRenderer.on("embedding-progress", handler);
-    return () =>
-      window.electron.ipcRenderer.removeListener("embedding-progress", handler);
+    return window.electron.ipcRenderer.on("embedding-progress", handler);
   }, []);
 
   const isComplete = status.total > 0 && status.done >= status.total;
@@ -213,15 +234,15 @@ const SmartSearchStatus = () => {
   } else if (status.initError) {
     statusLabel = "Error loading model";
     statusColor = "#ff9a9a";
+  } else if (status.paused) {
+    statusLabel = "Paused";
+    statusColor = "#888";
   } else if (!status.modelReady) {
     statusLabel = "Loading CLIP model…";
     statusColor = "#ffd577";
   } else if (isComplete) {
     statusLabel = "Complete";
     statusColor = "#d8d8d8";
-  } else if (status.paused) {
-    statusLabel = "Paused";
-    statusColor = "#888";
   } else if (status.total === 0) {
     statusLabel = "No images indexed yet";
     statusColor = "#888";
@@ -243,7 +264,7 @@ const SmartSearchStatus = () => {
       </div>
 
       {/* Progress bar */}
-      {status.modelReady && status.total > 0 && (
+      {status.total > 0 && (
         <>
           <div className="smart-search-status-bar-track">
             <div
@@ -254,28 +275,29 @@ const SmartSearchStatus = () => {
               }}
             />
           </div>
-          <div className="smart-search-status-counts">
-            {status.done.toLocaleString()} / {status.total.toLocaleString()}{" "}
-            images
-          </div>
         </>
       )}
+
+      <div className="smart-search-status-counts-row">
+        {status.total > 0 && (
+          <div className="smart-search-status-counts">
+            {status.done.toLocaleString()} / {status.total.toLocaleString()} images
+          </div>
+        )}
+        <button
+          className="smart-search-status-button"
+          onClick={togglePaused}
+          disabled={isToggling || status.pausePending}
+        >
+          {status.paused ? "Resume" : "Pause"}
+        </button>
+      </div>
 
       {/* Error detail */}
       {status.initError && (
         <div className="smart-search-status-error">{status.initError}</div>
       )}
 
-      {/* Info line */}
-      {!status.initError && (
-        <div className="smart-search-status-info">
-          {isComplete
-            ? "All images are indexed. Use Smart Search to find photos by description."
-            : status.modelReady
-              ? "Running quietly in the background. The app will not be affected."
-              : "Loading the local CLIP model..."}
-        </div>
-      )}
     </div>
   );
 };
@@ -314,12 +336,43 @@ const SettingsView = ({
     total: 0,
     done: 0,
     percentage: 0,
+    paused: false,
+    pausePending: false,
   });
+  const [isTogglingLocation, setIsTogglingLocation] = useState(false);
 
   const ipc = useCallback(
     (channel, ...args) => window.electron.ipcRenderer.invoke(channel, ...args),
     [],
   );
+
+  const fetchLocationStatus = useCallback(async () => {
+    try {
+      const status = await ipc("location:get-status");
+      if (status) setLocationStatus(status);
+      return status;
+    } catch {
+      return null;
+    }
+  }, [ipc]);
+
+  const toggleLocationPaused = useCallback(async () => {
+    if (isTogglingLocation || locationStatus.pausePending) return;
+    setIsTogglingLocation(true);
+    try {
+      await ipc(locationStatus.paused ? "location:resume" : "location:pause");
+      const nextStatus = await fetchLocationStatus();
+      if (!nextStatus?.pausePending) setIsTogglingLocation(false);
+    } catch {
+      setIsTogglingLocation(false);
+    }
+  }, [
+    isTogglingLocation,
+    locationStatus.paused,
+    locationStatus.pausePending,
+    ipc,
+    fetchLocationStatus,
+  ]);
 
   const saveSettings = useCallback(
     async (next) => {
@@ -380,30 +433,24 @@ const SettingsView = ({
   useEffect(() => {
     let interval;
 
-    const fetchLocationStatus = async () => {
-      try {
-        const s = await window.electron.ipcRenderer.invoke(
-          "location:get-status",
-        );
-        if (s) setLocationStatus(s);
-      } catch {}
-    };
-
     fetchLocationStatus();
     interval = setInterval(fetchLocationStatus, 4000);
 
     // optional: live updates if you later emit events
     const handler = (data) => {
-      if (data) setLocationStatus(data);
+      if (data) {
+        setLocationStatus(data);
+        if (!data.pausePending) setIsTogglingLocation(false);
+      }
     };
 
-    window.electron.ipcRenderer.on("location-progress", handler);
+    const unsubscribe = window.electron.ipcRenderer.on("location-progress", handler);
 
     return () => {
       clearInterval(interval);
-      window.electron.ipcRenderer.removeListener("location-progress", handler);
+      unsubscribe?.();
     };
-  }, []);
+  }, [fetchLocationStatus]);
 
   useEffect(() => {
     if (newTab) setSelectedTab(newTab);
@@ -434,12 +481,7 @@ const SettingsView = ({
         setIndexingStatus(data ? `Indexing: ${data}` : "Indexing files...");
       }
     };
-    window.electron.ipcRenderer.on("indexing-progress", handleProgress);
-    return () =>
-      window.electron.ipcRenderer.removeListener(
-        "indexing-progress",
-        handleProgress,
-      );
+    return window.electron.ipcRenderer.on("indexing-progress", handleProgress);
   }, []);
 
   // ─── Folder actions ──────────────────────────────────────────────────────────
@@ -1101,9 +1143,11 @@ const SettingsView = ({
                     className="smart-search-status-badge"
                     style={{ color: "#8f8f8f" }}
                   >
-                    {locationStatus.total === 0
-                      ? "Idle"
-                      : `${Math.round((locationStatus.done / locationStatus.total) * 100)}%`}
+                    {locationStatus.paused
+                      ? "Paused"
+                      : locationStatus.total === 0
+                        ? "Idle"
+                        : `${Math.round((locationStatus.done / locationStatus.total) * 100)}%`}
                   </span>
                 </div>
 
@@ -1119,12 +1163,23 @@ const SettingsView = ({
                       />
                     </div>
 
+                  </>
+                )}
+                <div className="smart-search-status-counts-row">
+                  {locationStatus.total > 0 && (
                     <div className="smart-search-status-counts">
                       {locationStatus.done.toLocaleString()} /{" "}
                       {locationStatus.total.toLocaleString()} locations
                     </div>
-                  </>
-                )}
+                  )}
+                  <button
+                    className="smart-search-status-button"
+                    onClick={toggleLocationPaused}
+                    disabled={isTogglingLocation || locationStatus.pausePending}
+                  >
+                    {locationStatus.paused ? "Resume" : "Pause"}
+                  </button>
+                </div>
               </div>
             </div>
           )}

@@ -249,6 +249,21 @@ const ExplorerView = ({
   const isRestoringScrollRef = useRef(false);
   const prefetchTimer = useRef(null);
   const loadMoreTimeout = useRef(null);
+  const selectedItemRef = useRef(null);
+  const onSelectRef = useRef(null);
+  const itemDeletedRef = useRef(null);
+
+  useEffect(() => {
+    selectedItemRef.current = selectedItem;
+  }, [selectedItem]);
+
+  useEffect(() => {
+    onSelectRef.current = onSelect;
+  }, [onSelect]);
+
+  useEffect(() => {
+    itemDeletedRef.current = itemDeleted;
+  }, [itemDeleted]);
 
   // ─── Drag-select refs ─────────────────────────────────────────────────────
   const dragStartRef = useRef(null); // { x, y } viewport coords at mousedown
@@ -868,6 +883,12 @@ useEffect(() => {
   return () => clearTimeout(t);
 }, [filters, fetchPageForIndex, fetchTotalCount]);
 
+  // A selection belongs to the current result set. Keeping it after a filter
+  // change could remove records that are no longer represented by totalCount.
+  useEffect(() => {
+    setRemoveModeSelected(new Set());
+  }, [filters]);
+
   // Reset scroll on filter change
   useEffect(() => {
     setScrollPosition(0);
@@ -1001,16 +1022,25 @@ useEffect(() => {
   // IPC: item removed
   useEffect(() => {
     const handleItemRemoved = ({ ids }) => {
-      const idList = Array.isArray(ids) ? ids : [ids];
+      const idSet = new Set(Array.isArray(ids) ? ids : [ids]);
+      let removedVisibleCount = 0;
 
-      idList.forEach((id) => {
+      idSet.forEach((id) => {
         const index = idToIndex.current.get(id);
         if (index == null) return;
         delete itemsRef.current[index];
         idToIndex.current.delete(id);
+        removedVisibleCount += 1;
       });
 
-      setTotalCount((prev) => (prev ? prev - idList.length : prev));
+      setTotalCount((prev) =>
+        prev == null ? prev : Math.max(0, prev - removedVisibleCount),
+      );
+      setRemoveModeSelected((prev) => {
+        const next = new Set(prev);
+        idSet.forEach((id) => next.delete(id));
+        return next;
+      });
 
       // Rebuild idToIndex
       const rebuilt = new Map();
@@ -1019,20 +1049,15 @@ useEffect(() => {
       });
       idToIndex.current = rebuilt;
 
-      if (idList.includes(selectedItem?.id)) {
+      if (idSet.has(selectedItemRef.current?.id)) {
         setSelectedItem(null);
-        onSelect(null, "single");
+        onSelectRef.current(null, "single");
       }
-      itemDeleted();
+      itemDeletedRef.current();
     };
 
-    window.electron.ipcRenderer.on("item-removed", handleItemRemoved);
-    return () =>
-      window.electron.ipcRenderer.removeListener(
-        "item-removed",
-        handleItemRemoved,
-      );
-  }, [selectedItem, itemDeleted]);
+    return window.electron.ipcRenderer.on("item-removed", handleItemRemoved);
+  }, []);
 
   // Keyboard navigation
   useEffect(() => {
@@ -1119,6 +1144,7 @@ useEffect(() => {
   useEffect(() => {
     if (!explorerMode?.enabled) {
       setAddModeSelected(new Set());
+      setRemoveModeSelected(new Set());
       return;
     }
     if (explorerMode.existing?.length) {

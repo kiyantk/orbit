@@ -37,6 +37,7 @@ class EmbeddingService {
     this._total         = 0;
     this._done          = 0;
     this._paused        = false;
+    this._pausePending  = false;
 
     // Pending text-embed requests keyed by requestId
     this._textCallbacks = new Map();   // requestId → { resolve, reject, timer }
@@ -50,13 +51,22 @@ class EmbeddingService {
     this._spawnWorker();
   }
 
+  setInitialPaused(paused) {
+    this._paused = paused;
+    this._pausePending = false;
+  }
+
   pause()  {
+    if (this._paused && this._pausePending) return;
     this._paused = true;
+    this._pausePending = true;
     this._worker?.postMessage({ type: "pause" });
   }
 
   resume() {
+    if (!this._paused && this._pausePending) return;
     this._paused = false;
+    this._pausePending = true;
     this._worker?.postMessage({ type: "resume" });
   }
 
@@ -87,6 +97,7 @@ class EmbeddingService {
       total:      this._total,
       done:       this._done,
       paused:     this._paused,
+      pausePending: this._pausePending,
       stopped:    this._stopped,
       percentage: this._total > 0
         ? Math.round((this._done / this._total) * 100)
@@ -156,6 +167,10 @@ class EmbeddingService {
       dataDir:      this._dataDir,
       modelCacheDir,
     });
+
+    // A replacement worker starts unpaused. Reapply a user pause so a worker
+    // restart cannot silently resume background embedding.
+    if (this._paused) this._worker.postMessage({ type: "pause" });
   }
 
   _handleWorkerMessage(msg) {
@@ -167,7 +182,10 @@ class EmbeddingService {
         this._initError     = msg.initError  ?? null;
         this._total         = msg.total;
         this._done          = msg.done;
-        this._paused        = msg.paused;
+        if (!this._pausePending || msg.paused === this._paused) {
+          this._paused = msg.paused;
+          this._pausePending = false;
+        }
 
         // Forward to renderer (same event name as before)
         const win = this._getMainWindow();
@@ -177,7 +195,8 @@ class EmbeddingService {
             initError:  msg.initError,
             total:      msg.total,
             done:       msg.done,
-            paused:     msg.paused,
+            paused:     this._paused,
+            pausePending: this._pausePending,
             percentage: msg.percentage,
           });
         }

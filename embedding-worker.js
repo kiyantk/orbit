@@ -407,11 +407,13 @@ parentPort.on("message", async (msg) => {
 
     case "pause":
       paused = true;
+      emitProgress();
       break;
 
     case "resume":
       if (paused) {
         paused = false;
+        emitProgress();
         scheduleLoop(100);
       }
       break;

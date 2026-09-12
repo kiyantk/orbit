@@ -437,6 +437,8 @@ const defaultConfig = {
   mediaFilter: "none",
   hideScreenshotsAndScreenRecordings: false,
   excludeScreenCapturesFromMilestones: false,
+  smartSearchPaused: false,
+  locationIndexingPaused: false,
   driveLetterMap: {},
 };
 
@@ -449,6 +451,79 @@ function initPaths() {
 
   configPath = path.join(dataDir, "config.json");
   dbPath = path.join(dataDir, "orbit-index.db");
+}
+
+function readConfig() {
+  try {
+    return {
+      ...defaultConfig,
+      ...JSON.parse(fs.readFileSync(configPath, "utf8")),
+    };
+  } catch {
+    return { ...defaultConfig };
+  }
+}
+
+function saveConfigPatch(patch) {
+  const config = { ...readConfig(), ...patch };
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf8");
+  return config;
+}
+
+// A paused service has no indexing worker to report progress. Keep that UI
+// responsive by calculating its snapshot in a short-lived worker, then cache
+// it. Running COUNT queries directly in this process caused visible stalls on
+// large libraries every time the status panel polled for an update.
+const progressSnapshots = new Map();
+const progressSnapshotLoads = new Map();
+
+function invalidateProgressSnapshots() {
+  progressSnapshots.clear();
+}
+
+function getProgressSnapshot(type) {
+  const cached = progressSnapshots.get(type);
+  if (cached) return Promise.resolve(cached);
+
+  const inFlight = progressSnapshotLoads.get(type);
+  if (inFlight) return inFlight;
+
+  const load = new Promise((resolve) => {
+    const worker = new Worker(path.join(__dirname, "progress-snapshot-worker.js"), {
+      workerData: { dbPath, type },
+    });
+    let settled = false;
+
+    const finish = (snapshot) => {
+      if (settled) return;
+      settled = true;
+      progressSnapshotLoads.delete(type);
+      if (snapshot) progressSnapshots.set(type, snapshot);
+      resolve(snapshot ?? { total: 0, done: 0 });
+    };
+
+    worker.once("message", (message) => {
+      if (!message?.success) {
+        console.warn("Unable to read paused indexing progress:", message?.error);
+        finish();
+        return;
+      }
+      finish({ total: message.total ?? 0, done: message.done ?? 0 });
+    });
+    worker.once("error", (error) => {
+      console.warn("Unable to read paused indexing progress:", error.message);
+      finish();
+    });
+    worker.once("exit", (code) => {
+      if (code !== 0) {
+        console.warn(`Paused indexing progress worker exited with code ${code}`);
+      }
+      finish();
+    });
+  });
+
+  progressSnapshotLoads.set(type, load);
+  return load;
 }
 
 function initDatabase() {
@@ -557,6 +632,10 @@ function startEmbeddingService() {
   if (embeddingService) return;
   initDatabase();
   embeddingService = new EmbeddingService(db, dataDir, () => mainWindow);
+  if (readConfig().smartSearchPaused) {
+    embeddingService.setInitialPaused(true);
+    return;
+  }
   embeddingService.start();
 }
 
@@ -570,6 +649,10 @@ function startLocationService() {
     : path.join(__dirname, "geo.db");
 
   locationService = new LocationService(db, dataDir, geoDbPath, () => mainWindow);
+  if (readConfig().locationIndexingPaused) {
+    locationService.setInitialPaused(true);
+    return;
+  }
   locationService.start();
 }
 
@@ -691,12 +774,25 @@ ipcMain.handle("get-settings", async () => {
       "utf8",
     );
 
-  return JSON.parse(fs.readFileSync(configPath, "utf8"));
+  return readConfig();
 });
 
 ipcMain.handle("save-settings", async (event, settings) => {
   try {
-    fs.writeFileSync(configPath, JSON.stringify(settings, null, 2), "utf8");
+    const currentConfig = readConfig();
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          ...settings,
+          smartSearchPaused: currentConfig.smartSearchPaused,
+          locationIndexingPaused: currentConfig.locationIndexingPaused,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
     return { success: true };
   } catch (err) {
     console.error(err);
@@ -1210,6 +1306,7 @@ ipcMain.handle("index-files", async (event, folders) => {
       });
     }
 
+    invalidateProgressSnapshots();
     return { success: true, message: "Files indexed successfully" };
   } catch (err) {
     console.error(err);
@@ -2419,6 +2516,7 @@ ipcMain.handle("remove-folder-data", async (event, folderPath) => {
       }
     })();
 
+    invalidateProgressSnapshots();
     return { success: true };
   } catch (err) {
     console.error("Error removing folder data:", err);
@@ -2438,6 +2536,7 @@ ipcMain.handle("remove-item-from-index", async (event, ids) => {
     }
 
     const idSet = new Set(idList.map(Number));
+    const removedIdSet = new Set();
 
     db.transaction(() => {
       for (const id of idSet) {
@@ -2452,7 +2551,8 @@ ipcMain.handle("remove-item-from-index", async (event, ids) => {
         }
 
         // 2. Remove item from DB
-        db.prepare("DELETE FROM files WHERE id = ?").run(id);
+        const result = db.prepare("DELETE FROM files WHERE id = ?").run(id);
+        if (result.changes > 0) removedIdSet.add(id);
       }
 
       // 3. Remove id(s) from all tags' media_ids
@@ -2485,7 +2585,7 @@ ipcMain.handle("remove-item-from-index", async (event, ids) => {
     })();
 
     // 5. Remove thumbnails from disk (outside transaction — non-critical)
-    for (const id of idSet) {
+    for (const id of removedIdSet) {
       const thumbnailPath = path.join(dataDir, "thumbnails", `${id}_thumb.jpg`);
       if (fs.existsSync(thumbnailPath)) {
         try {
@@ -2500,7 +2600,8 @@ ipcMain.handle("remove-item-from-index", async (event, ids) => {
       }
     }
 
-    event.sender.send("item-removed", { ids: [...idSet] });
+    if (removedIdSet.size > 0) invalidateProgressSnapshots();
+    event.sender.send("item-removed", { ids: [...removedIdSet] });
 
     return { success: true };
   } catch (err) {
@@ -3800,20 +3901,47 @@ ipcMain.handle("save-drive-letter-map", (event, map) => {
 });
 
 /** Return current embedding progress */
-ipcMain.handle("embedding:get-status", () => {
-  if (!embeddingService)
-    return { modelReady: false, total: 0, done: 0, percentage: 0 };
+ipcMain.handle("embedding:get-status", async () => {
+  if (!embeddingService || !embeddingService._worker) {
+    const progress = await getProgressSnapshot("embedding");
+    const serviceStatus = embeddingService?.getStatus();
+    return {
+      modelReady: false,
+      initError: serviceStatus?.initError ?? null,
+      ...progress,
+      paused: serviceStatus?.paused ?? readConfig().smartSearchPaused,
+      pausePending: serviceStatus?.pausePending ?? false,
+      percentage:
+        progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0,
+    };
+  }
   return embeddingService.getStatus();
 });
 
 /** Pause/resume from the renderer (optional — e.g. during active media browsing) */
 ipcMain.handle("embedding:pause", () => {
   embeddingService?.pause();
-  return { ok: true };
+  try {
+    saveConfigPatch({ smartSearchPaused: true });
+    return { ok: true };
+  } catch (err) {
+    console.error("Failed to persist Smart Search pause state:", err);
+    return { ok: false, error: err.message };
+  }
 });
 ipcMain.handle("embedding:resume", () => {
-  embeddingService?.resume();
-  return { ok: true };
+  try {
+    saveConfigPatch({ smartSearchPaused: false });
+    if (!embeddingService) startEmbeddingService();
+    else {
+      embeddingService.resume();
+      embeddingService.start();
+    }
+    return { ok: true };
+  } catch (err) {
+    console.error("Failed to persist Smart Search pause state:", err);
+    return { ok: false, error: err.message };
+  }
 });
 
 /**
@@ -4060,13 +4188,46 @@ ipcMain.handle("embedding:has-embedding", async (event, fileId) => {
 // ─── Location service IPC ──────────────────────────────────────────────────
 
 /** Current progress snapshot */
-ipcMain.handle("location:get-status", () => {
-  if (!locationService) return { total: 0, done: 0, percentage: 0 };
+ipcMain.handle("location:get-status", async () => {
+  if (!locationService || !locationService._worker) {
+    const progress = await getProgressSnapshot("location");
+    const serviceStatus = locationService?.getStatus();
+    return {
+      ...progress,
+      paused: serviceStatus?.paused ?? readConfig().locationIndexingPaused,
+      pausePending: serviceStatus?.pausePending ?? false,
+      percentage:
+        progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0,
+    };
+  }
   return locationService.getStatus();
 });
 
-ipcMain.handle("location:pause",  () => { locationService?.pause();  return { ok: true }; });
-ipcMain.handle("location:resume", () => { locationService?.resume(); return { ok: true }; });
+ipcMain.handle("location:pause", () => {
+  locationService?.pause();
+  try {
+    saveConfigPatch({ locationIndexingPaused: true });
+    return { ok: true };
+  } catch (err) {
+    console.error("Failed to persist Location Indexing pause state:", err);
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle("location:resume", () => {
+  try {
+    saveConfigPatch({ locationIndexingPaused: false });
+    if (!locationService) startLocationService();
+    else {
+      locationService.resume();
+      locationService.start();
+    }
+    return { ok: true };
+  } catch (err) {
+    console.error("Failed to persist Location Indexing pause state:", err);
+    return { ok: false, error: err.message };
+  }
+});
 
 /**
  * Fetch resolved location rows for a set of file IDs.
