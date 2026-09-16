@@ -21,6 +21,10 @@ import FolderList from "./FolderList";
 import HeicPopup from "./HeicPopup";
 import Popup from "./Popup";
 import ConfirmPopup from "./ConfirmPopup";
+import {
+  DEFAULT_PREVIEW_METADATA_FIELDS,
+  PREVIEW_METADATA_FIELDS,
+} from "./previewMetadata";
 
 const TABS = [
   "User",
@@ -314,6 +318,7 @@ const SettingsView = ({
   const [selectedTab, setSelectedTab] = useState("User");
   const [settings, setSettings] = useState({
     driveLetterMap: {},
+    hiddenFolders: [],
     ...currentSettings,
   });
   const [isIndexing, setIsIndexing] = useState(false);
@@ -321,6 +326,8 @@ const SettingsView = ({
   const [missingHeicFiles, setMissingHeicFiles] = useState([]);
   const [showHeicPopup, setShowHeicPopup] = useState(false);
   const [showToolsPopup, setShowToolsPopup] = useState(false);
+  const [showPreviewMetadataPopup, setShowPreviewMetadataPopup] =
+    useState(false);
   const [isFetchingUsage, setIsFetchingUsage] = useState(false);
   const [storageUsage, setStorageUsage] = useState(null);
 
@@ -391,6 +398,15 @@ const SettingsView = ({
     setSettings((prev) => ({ ...prev, ...patch }));
   }, []);
 
+  const refreshMissingHeicFiles = useCallback(async () => {
+    try {
+      const res = await ipc("fetch-heic-missing-thumbnails");
+      if (res.success) setMissingHeicFiles(res.files);
+    } catch (err) {
+      console.error("Error fetching HEIC files without thumbnails:", err);
+    }
+  }, [ipc]);
+
   const handleCheckbox = (key) => (e) =>
     updateSettings({ [key]: e.target.checked });
   const handleSelect = (key) => (e) =>
@@ -421,11 +437,37 @@ const SettingsView = ({
     });
   }, []);
 
+  const handleToggleFolderVisibility = useCallback((folder) => {
+    setSettings((prev) => {
+      const hiddenFolders = prev.hiddenFolders || [];
+      return {
+        ...prev,
+        hiddenFolders: hiddenFolders.includes(folder)
+          ? hiddenFolders.filter((path) => path !== folder)
+          : [...hiddenFolders, folder],
+      };
+    });
+  }, []);
+
+  const togglePreviewMetadataField = useCallback((field) => {
+    setSettings((prev) => {
+      const visibleFields = Array.isArray(prev.previewMetadataFields)
+        ? prev.previewMetadataFields
+        : DEFAULT_PREVIEW_METADATA_FIELDS;
+      return {
+        ...prev,
+        previewMetadataFields: visibleFields.includes(field)
+          ? visibleFields.filter((id) => id !== field)
+          : [...visibleFields, field],
+      };
+    });
+  }, []);
+
   // ─── Effects ────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     ipc("get-settings").then((loaded) => {
-      if (loaded) setSettings({ driveLetterMap: {}, ...loaded });
+      if (loaded) setSettings({ driveLetterMap: {}, hiddenFolders: [], ...loaded });
     });
     new Image().src = `${process.env.PUBLIC_URL}/logo-v2-orbit-bright-white-shadow-small.png`;
   }, [ipc]);
@@ -461,10 +503,8 @@ const SettingsView = ({
   }, [settings]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    ipc("fetch-heic-missing-thumbnails").then((res) => {
-      if (res.success) setMissingHeicFiles(res.files);
-    });
-  }, [settings.indexedFolders, ipc]);
+    refreshMissingHeicFiles();
+  }, [settings.indexedFolders, refreshMissingHeicFiles]);
 
   useEffect(() => {
     const handleProgress = (data) => {
@@ -495,7 +535,12 @@ const SettingsView = ({
     setShowToolsPopup(false);
     try {
       const result = await ipc("index-files", folders);
-      setIndexingStatus(result.success ? null : `Error: ${result.error}`);
+      if (result.success) {
+        await refreshMissingHeicFiles();
+        setIndexingStatus(null);
+      } else {
+        setIndexingStatus(`Error: ${result.error}`);
+      }
     } catch (err) {
       console.error("Error indexing files:", err);
       setIndexingStatus("Error occurred during indexing");
@@ -523,11 +568,15 @@ const SettingsView = ({
   const doRemoveFolder = async (folderPath) => {
     setSettings((prev) => {
       const nextMap = { ...(prev.driveLetterMap || {}) };
+      const nextHiddenFolders = (prev.hiddenFolders || []).filter(
+        (folder) => folder !== folderPath,
+      );
       delete nextMap[folderPath];
       return {
         ...prev,
         indexedFolders: prev.indexedFolders.filter((f) => f !== folderPath),
         driveLetterMap: nextMap,
+        hiddenFolders: nextHiddenFolders,
       };
     });
     try {
@@ -560,7 +609,7 @@ const SettingsView = ({
         console.error("Error removing folder:", err);
       }
     }
-    updateSettings({ indexedFolders: [], driveLetterMap: {} });
+    updateSettings({ indexedFolders: [], driveLetterMap: {}, hiddenFolders: [] });
   };
 
   const handleRemoveAll = () => {
@@ -817,6 +866,15 @@ const SettingsView = ({
                   <option value="size">File Size</option>
                   <option value="random">Random</option>
                 </select>
+              </SettingsRow>
+              <SettingsRow>
+                <span>Preview metadata:</span>
+                <button
+                  className="settings-normal-button"
+                  onClick={() => setShowPreviewMetadataPopup(true)}
+                >
+                  Manage fields
+                </button>
               </SettingsRow>
               {/* <SettingsRow>
                 <span>Explorer layout:</span>
@@ -1090,6 +1148,8 @@ const SettingsView = ({
                 folderStatuses={folderStatuses}
                 driveLetterMap={settings.driveLetterMap || {}}
                 onSetDriveLetter={handleSetDriveLetter}
+                hiddenFolders={settings.hiddenFolders || []}
+                onToggleFolderVisibility={handleToggleFolderVisibility}
               />
               <div className="settings-media-buttons">
                 <button
@@ -1490,6 +1550,43 @@ const SettingsView = ({
           onClose={() => setShowHeicPopup(false)}
         />
       )}
+      {showPreviewMetadataPopup && (
+        <Popup
+          title="Preview metadata"
+          contentWidth="90%"
+          actions={[
+            {
+              label: "Done",
+              kind: "secondary",
+              onClick: () => setShowPreviewMetadataPopup(false),
+            },
+          ]}
+        >
+          <p style={{ marginBottom: 12 }}>
+            Choose the fields shown beneath media in the Preview Panel.
+          </p>
+          <div className="preview-metadata-fields-container">
+            {PREVIEW_METADATA_FIELDS.map(({ id, label }) => {
+              const visibleFields = Array.isArray(settings.previewMetadataFields)
+                ? settings.previewMetadataFields
+                : DEFAULT_PREVIEW_METADATA_FIELDS;
+              return (
+                <label
+                  key={id}
+                  style={{ display: "flex", alignItems: "center", gap: 8 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={visibleFields.includes(id)}
+                    onChange={() => togglePreviewMetadataField(id)}
+                  />
+                  {label}
+                </label>
+              );
+            })}
+          </div>
+        </Popup>
+      )}
       {showToolsPopup && (
         <Popup
           title="Tools"
@@ -1549,8 +1646,9 @@ const SettingsView = ({
               },
               {
                 label: "Generate HEIC Thumbnails",
-                action: () => {
+                action: async () => {
                   setShowToolsPopup(false);
+                  await refreshMissingHeicFiles();
                   setShowHeicPopup(true);
                 },
               },

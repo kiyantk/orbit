@@ -12,6 +12,7 @@ import { MapContainer, TileLayer, Marker } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import TagPill from "./TagPill";
+import { isPreviewMetadataFieldVisible } from "./previewMetadata";
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -93,8 +94,8 @@ function safePlay(video) {
 
 // ─── Metadata row ─────────────────────────────────────────────────────────────
 
-const MetaRow = ({ label, value, title, children }) => {
-  if (value == null && !children) return null;
+const MetaRow = ({ label, value, title, children, visible = true }) => {
+  if (!visible || (value == null && !children)) return null;
   return (
     <div className={`metadata-row ${"metadata-row-" + label}`}>
       <span className="metadata-label">{label}</span>
@@ -238,6 +239,8 @@ export default function PreviewPanel({
     currentSettings?.adjustHeicColors && item?.extension === ".heic"
       ? "heic-color-adjust"
       : "";
+  const isMetadataVisible = (field) =>
+    isPreviewMetadataFieldVisible(currentSettings, field);
 
   // ── Video sync ─────────────────────────────────────────────────────────────
 
@@ -581,32 +584,57 @@ export default function PreviewPanel({
 
       {/* ── Metadata ── */}
       <div className="metadata-panel" key={panelKey}>
-        <MetaRow label="Filename" value={item.filename} />
+        <MetaRow
+          label="Filename"
+          value={item.filename}
+          visible={isMetadataVisible("filename")}
+        />
         <MetaRow
           label="Size"
           value={item.size != null ? formatBytes(item.size) : null}
+          visible={isMetadataVisible("size")}
         />
 
-        {(item.extension || item.file_type) && (
+        {isMetadataVisible("type") && (item.extension || item.file_type) && (
           <MetaRow
             label="Type"
             value={`${item.extension}${item.file_type ? ` (${item.file_type})` : ""}`}
           />
         )}
 
-        {takenDisplay && <MetaRow label="Taken" value={takenDisplay} />}
+        {takenDisplay && (
+          <MetaRow
+            label="Taken"
+            value={takenDisplay}
+            visible={isMetadataVisible("taken")}
+          />
+        )}
 
-        <MetaRow label="Device" value={item.device_model} />
+        <MetaRow
+          label="Device"
+          value={item.device_model}
+          visible={isMetadataVisible("device")}
+        />
 
         {item.width && item.height && (
-          <MetaRow label="Resolution" value={`${item.width}x${item.height}`} />
+          <MetaRow
+            label="Resolution"
+            value={`${item.width}x${item.height}`}
+            visible={isMetadataVisible("resolution")}
+          />
         )}
 
         {isVideo && duration > 0 && (
-          <MetaRow label="Duration" value={formatDuration(duration)} />
+          <MetaRow
+            label="Duration"
+            value={formatDuration(duration)}
+            visible={isMetadataVisible("duration")}
+          />
         )}
 
-        {item.latitude != null && item.longitude != null && (
+        {isMetadataVisible("location") &&
+          item.latitude != null &&
+          item.longitude != null && (
           <MetaRow
             label="Location"
             title={`${item.latitude}, ${item.longitude}${item.altitude != null ? `, ${item.altitude.toFixed(0)} m` : ""}`}
@@ -642,59 +670,109 @@ export default function PreviewPanel({
             </div>
           </MetaRow>
         )}
-        <MetaRow label="Place" value={itemPlace} />
-        <MetaRow label="Country" value={item.country ? itemCountry : null} />
-        <MetaRow label="Lens" value={item.lens_model} />
-        <MetaRow label="ISO" value={item.iso} />
-        <MetaRow label="Software" value={item.software} />
+        <MetaRow
+          label="Place"
+          value={itemPlace}
+          visible={isMetadataVisible("place")}
+        />
+        <MetaRow
+          label="Country"
+          value={item.country ? itemCountry : null}
+          visible={isMetadataVisible("country")}
+        />
+        <MetaRow
+          label="Lens"
+          value={item.lens_model}
+          visible={isMetadataVisible("lens")}
+        />
+        <MetaRow label="ISO" value={item.iso} visible={isMetadataVisible("iso")} />
+        <MetaRow
+          label="Software"
+          value={item.software}
+          visible={isMetadataVisible("software")}
+        />
         <MetaRow
           label="Megapixels"
           value={item.megapixels ? item.megapixels.toFixed(0) : null}
+          visible={isMetadataVisible("megapixels")}
         />
         <MetaRow
           label="Exposure"
           value={item.exposure_time ? `${item.exposure_time} s` : null}
+          visible={isMetadataVisible("exposure")}
         />
-        <MetaRow label="Color Space" value={item.color_space} />
-        <MetaRow label="Flash" value={item.flash} />
+        <MetaRow
+          label="Color Space"
+          value={item.color_space}
+          visible={isMetadataVisible("colorSpace")}
+        />
+        <MetaRow
+          label="Flash"
+          value={item.flash}
+          visible={isMetadataVisible("flash")}
+        />
         <MetaRow
           label="Aperture"
           value={item.aperture ? `f/${item.aperture}` : null}
+          visible={isMetadataVisible("aperture")}
         />
 
         {item.focal_length && (
           <MetaRow
             label="Focal Length"
             value={`${item.focal_length} (${item.focal_length_35mm})`}
+            visible={isMetadataVisible("focalLength")}
           />
         )}
 
-        <MetaRow label="Time Offset" value={item.offset_time_original} />
-        <MetaRow label="Make" value={item.camera_make} />
+        <MetaRow
+          label="Time Offset"
+          value={item.offset_time_original}
+          visible={isMetadataVisible("timeOffset")}
+        />
+        <MetaRow
+          label="Make"
+          value={item.camera_make}
+          visible={isMetadataVisible("make")}
+        />
 
         {(item.create_date || item.created) && birthDate && referenceDate && (
-          <MetaRow label="Age" value={calculateAge(birthDate, referenceDate)} />
+          <MetaRow
+            label="Age"
+            value={calculateAge(birthDate, referenceDate)}
+            visible={isMetadataVisible("age")}
+          />
         )}
 
         <MetaRow
           label="Modified At"
           value={item.modified ? formatTimestamp(item.modified) : null}
+          visible={isMetadataVisible("modifiedAt")}
         />
         <MetaRow
           label="Created At"
           value={item.created ? formatTimestamp(item.created) : null}
+          visible={isMetadataVisible("createdAt")}
         />
-        <MetaRow label="Path" value={item.path} />
-        {smartScore != null && (
+        <MetaRow
+          label="Path"
+          value={item.path}
+          visible={isMetadataVisible("path")}
+        />
+        {isMetadataVisible("similarity") && smartScore != null && (
           <MetaRow
             label="Similarity"
             value={`${(smartScore * 100).toFixed(1)}%`}
             title={`Raw CLIP cosine similarity: ${smartScore.toFixed(4)}`}
           />
         )}
-        <MetaRow label="ID" value={item.id ? item.media_id : null} />
+        <MetaRow
+          label="ID"
+          value={item.id ? item.media_id : null}
+          visible={isMetadataVisible("id")}
+        />
 
-        {tags.length > 0 && (
+        {isMetadataVisible("tags") && tags.length > 0 && (
           <MetaRow label="Tags">
             {tags.map((tag) => (
               <TagPill key={tag.id} tag={tag} style={{ marginRight: 4 }} />

@@ -2899,3 +2899,12 @@ input[type="checkbox"] {
 .milestone-gallery-empty {
   color: #aaa6b2;
 }
+
+.preview-metadata-fields-container {
+  display: grid;
+  gap: 8px;
+  padding: 12px 20px;
+  background: rgb(32 29 39 / 92%);
+  height: 40vh;
+  overflow-y: auto;
+}

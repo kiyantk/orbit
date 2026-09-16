@@ -132,6 +132,7 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem }) => {
       try {
         res = await window.electron.ipcRenderer.invoke("fetch-map-data", {
           filters,
+          settings: currentSettings || {},
         });
       } catch (err) {
         console.error("[MapView] fetch-map-data failed:", err);
@@ -272,7 +273,7 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem }) => {
     return () => {
       cancelled = true;
     };
-  }, [mapReady, filters]);
+  }, [mapReady, filters, currentSettings]);
 
   // ─── Load and cache TopoJSON → GeoJSON ───────────────────────────────────
   const loadGeoJson = useCallback(async () => {

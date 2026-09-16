@@ -75,6 +75,7 @@ const ShuffleView = ({
             sortOrder: chronological ? "asc" : "desc",
             ...filters,
           },
+          settings: currentSettings || {},
         });
         // Discard if filters changed while we were awaiting
         if (generation !== fetchGenerationRef.current) return [];
@@ -93,7 +94,7 @@ const ShuffleView = ({
       }
       return [];
     },
-    [preloadCount, chronological, filters],
+    [preloadCount, chronological, filters, currentSettings],
   );
 
   const preloadImages = useCallback(

@@ -910,6 +910,7 @@ useEffect(() => {
         settings: {
           hideScreenshotsAndScreenRecordings:
             !!currentSettings?.hideScreenshotsAndScreenRecordings,
+          hiddenFolders: currentSettings?.hiddenFolders || [],
         },
       })
       .then((data) => {
@@ -919,6 +920,7 @@ useEffect(() => {
     filters,
     currentSettings?.explorerDateScroll,
     currentSettings?.hideScreenshotsAndScreenRecordings,
+    currentSettings?.hiddenFolders,
   ]);
 
   useEffect(() => {

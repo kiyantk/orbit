@@ -455,6 +455,7 @@ const ActionPanel = ({
     async function fetchOptions() {
       const opts = await window.electron.ipcRenderer.invoke("fetch-options", {
         birthDate: settings?.birthDate ?? null,
+        hiddenFolders: settings?.hiddenFolders,
       });
       setOptions(opts);
     }

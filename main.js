@@ -440,6 +440,7 @@ const defaultConfig = {
   smartSearchPaused: false,
   locationIndexingPaused: false,
   driveLetterMap: {},
+  hiddenFolders: [],
 };
 
 // Database
@@ -944,6 +945,16 @@ function buildWhereClause(rawFilters = {}, options = {}) {
     );
   }
 
+  const hiddenFolders = Array.isArray(options.hiddenFolders)
+    ? options.hiddenFolders.filter(Boolean)
+    : [];
+  if (hiddenFolders.length) {
+    clauses.push(
+      `folder_path NOT IN (${hiddenFolders.map(() => "?").join(", ")})`,
+    );
+    params.push(...hiddenFolders);
+  }
+
   // global safety filter
   if (options.allowUndated !== true) {
     clauses.push(`(
@@ -975,6 +986,7 @@ ipcMain.handle(
 
       const { sql: whereSQL, params } = buildWhereClause(filters, {
         excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
+        hiddenFolders: settings.hiddenFolders,
       });
 
       // --- sorting ---
@@ -1058,6 +1070,7 @@ ipcMain.handle("fetch-file-overview", async (event, { filters = {}, settings = {
 
   const { sql: whereSQL, params } = buildWhereClause(filters, {
     excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
+    hiddenFolders: settings.hiddenFolders,
   });
 
   const stmt = db.prepare(`
@@ -1080,6 +1093,7 @@ ipcMain.handle(
 
       const { sql, params } = buildWhereClause(filters, {
         allowUndated: true,
+        hiddenFolders: settings.hiddenFolders,
       });
 
       const whereSQL = [
@@ -1199,6 +1213,7 @@ ipcMain.handle("get-filtered-files-count", async (event, args = {}) => {
 
     const { sql, params } = buildWhereClause(filters, {
       excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
+      hiddenFolders: settings.hiddenFolders,
     });
 
     const result = db
@@ -2001,7 +2016,9 @@ async function indexFilesRecursively(
   }
 }
 
-ipcMain.handle("fetch-options", async (event, { birthDate = null }) => {
+ipcMain.handle(
+  "fetch-options",
+  async (event, { birthDate = null, hiddenFolders = null } = {}) => {
   try {
     initDatabase();
 
@@ -2012,11 +2029,17 @@ ipcMain.handle("fetch-options", async (event, { birthDate = null }) => {
       .all()
       .map((r) => r.device_model);
     const driveMap = getDriveLetterMap();
+    const hiddenSourceFolders = Array.isArray(hiddenFolders)
+      ? hiddenFolders.filter(Boolean)
+      : readConfig().hiddenFolders || [];
+    const hiddenFolderClause = hiddenSourceFolders.length
+      ? ` AND folder_path NOT IN (${hiddenSourceFolders.map(() => "?").join(", ")})`
+      : "";
     const folders = db
       .prepare(
-        "SELECT DISTINCT folder_path FROM files WHERE folder_path IS NOT NULL",
+        `SELECT DISTINCT folder_path FROM files WHERE folder_path IS NOT NULL${hiddenFolderClause}`,
       )
-      .all()
+      .all(...hiddenSourceFolders)
       .map((r) => ({
         value: r.folder_path,
         label: applyDriveLetterMap(r.folder_path, driveMap),
@@ -3928,7 +3951,8 @@ ipcMain.handle("embedding:pause", () => {
     console.error("Failed to persist Smart Search pause state:", err);
     return { ok: false, error: err.message };
   }
-});
+},
+);
 ipcMain.handle("embedding:resume", () => {
   try {
     saveConfigPatch({ smartSearchPaused: false });
@@ -4714,6 +4738,7 @@ ipcMain.handle(
     `;
       const { sql, params } = buildWhereClause(filters, {
         excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
+        hiddenFolders: settings.hiddenFolders,
       });
       return db
         .prepare(

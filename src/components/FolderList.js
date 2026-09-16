@@ -1,4 +1,4 @@
-import { faCircle, faCircleCheck, faCircleXmark, faHardDrive, faXmark } from "@fortawesome/free-solid-svg-icons";
+import { faCircle, faCircleCheck, faCircleXmark, faEye, faEyeSlash, faHardDrive, faXmark } from "@fortawesome/free-solid-svg-icons";
 import React, { useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
@@ -28,6 +28,8 @@ const FolderList = ({
   folderStatuses,
   driveLetterMap = {},
   onSetDriveLetter,
+  hiddenFolders = [],
+  onToggleFolderVisibility,
   isOnboarding = false
 }) => {
   // Track which folder row is in "edit drive letter" mode
@@ -71,6 +73,7 @@ const FolderList = ({
         folders.map((folder, index) => {
           const customLetter = driveLetterMap[folder];
           const hasCustom = !!customLetter;
+          const isHidden = hiddenFolders.includes(folder);
           const displayPath = hasCustom ? applyDriveLetter(folder, customLetter) : folder;
           const isAvailable = folderStatuses?.[displayPath];
 
@@ -151,6 +154,22 @@ const FolderList = ({
                       {hasCustom ? customLetter : <FontAwesomeIcon icon={faHardDrive} />}
                     </button>
                   )}
+
+                  <button
+                    className="welcome-popup-remove-folder welcome-popup-folder-action"
+                    title={isHidden ? "Show source in grid" : "Hide source from grid"}
+                    onClick={() => onToggleFolderVisibility?.(folder)}
+                    disabled={isDisabled}
+                    style={{
+                      marginRight: 4,
+                      color: isHidden ? "#888" : "#ffffff",
+                      fontSize: 11,
+                      minWidth: 28,
+                      opacity: isDisabled ? 0.5 : 1,
+                    }}
+                  >
+                    <FontAwesomeIcon icon={isHidden ? faEyeSlash : faEye} />
+                  </button>
               </div>
               )}
 
