@@ -1066,6 +1066,63 @@ const SettingsView = ({
           {selectedTab === "Places" && (
             <div>
               <SettingsRow>
+                <span>Coordinate selection:</span>
+                <select
+                  value={settings.placesSelectionMode ?? "smart"}
+                  onChange={handleSelect("placesSelectionMode")}
+                  className="settings-itemstyle-select"
+                >
+                  <option value="smart">Smart (recommended)</option>
+                  <option value="smallest">Smallest division</option>
+                </select>
+                <span className="settings-hint">
+                  Changing this regenerates all location data.
+                </span>
+              </SettingsRow>
+
+              <SettingsRow>
+                <span>Place names:</span>
+                <select
+                  value={settings.placesNameDisplay ?? "english"}
+                  onChange={handleSelect("placesNameDisplay")}
+                  className="settings-itemstyle-select"
+                >
+                  <option value="english">English name if available</option>
+                  <option value="local">Local name</option>
+                </select>
+              </SettingsRow>
+
+              <SettingsRow>
+                <span>Region names:</span>
+                <select
+                  value={
+                    settings.placesRegionNames === "local" ||
+                    settings.placesRegionNames === "code"
+                      ? settings.placesRegionNames
+                      : "english"
+                  }
+                  onChange={handleSelect("placesRegionNames")}
+                  className="settings-itemstyle-select"
+                >
+                  <option value="english">English name if available</option>
+                  <option value="local">Local name</option>
+                  <option value="code">Code</option>
+                </select>
+              </SettingsRow>
+
+              <SettingsRow>
+                <span>Country names:</span>
+                <select
+                  value={settings.placesCountryNames ?? "name"}
+                  onChange={handleSelect("placesCountryNames")}
+                  className="settings-itemstyle-select"
+                >
+                  <option value="name">Name</option>
+                  <option value="code">Code</option>
+                </select>
+              </SettingsRow>
+
+              <SettingsRow>
                 <span>Sort places by:</span>
                 <select
                   value={settings.placesSortBy ?? "count"}

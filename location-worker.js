@@ -1,206 +1,226 @@
 /**
- * location-worker.js
- *
- * Runs inside a Worker thread — resolves GPS coordinates for every file that
- * has latitude/longitude but no entry in the `locations` table yet.
- *
- * For each qualifying file it performs a fast nearest-neighbour lookup against
- * the bundled geo.db (cities table) and writes the result to the user's own
- * orbit-index.db under a `locations` table.
- *
- * Message protocol (main → worker):
- *   { type: "start",   dbPath, geoDbPath, dataDir }
- *   { type: "pause"  }
- *   { type: "resume" }
- *   { type: "stop"   }
- *
- * Message protocol (worker → main):
- *   { type: "progress", total, done, paused, percentage }
- *   { type: "log",      level, message }
+ * Resolves GPS coordinates against the bundled locality polygons in places.db.
+ * It runs in a Worker thread so SQLite lookup and index writes never block the
+ * Electron main process.
  */
 
 const { parentPort } = require("worker_threads");
-const path = require("path");
 const Database = require("better-sqlite3");
+const { OfflineGeocoder } = require("./geocoder");
+const {
+  LOCATION_METADATA_TABLE,
+  getLocationGeocoderVersion,
+  normalizeLocationSelectionMode,
+} = require("./location-schema");
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-// Delay between files so we never pin the CPU.
-const INTER_FILE_DELAY_MS = 50;
-// How long to wait before re-scanning for newly-indexed files.
+const BATCH_SIZE = 50;
+const PROGRESS_BATCH_INTERVAL = 5;
 const RECHECK_INTERVAL_MS = 60_000;
-// Maximum straight-line distance (km) to accept a city match.
-// Points in the ocean / very remote areas will stay city-less.
-const MAX_CITY_DISTANCE_KM = 50;
 
-// ── State ─────────────────────────────────────────────────────────────────────
-let db = null; // user's orbit-index.db
-let geoDB = null; // read-only geo.db
+let db = null; // User's orbit-index.db.
+let placesDB = null; // Read-only OfflineGeocoder backed by places.db.
+let getNextFilesStmt = null;
+let insertLocationStmt = null;
+let countTotalStmt = null;
+let countDoneStmt = null;
+let writeBatch = null;
 
 let paused = false;
 let stopped = false;
 let running = false;
 let loopTimer = null;
+let batchesSinceProgress = 0;
 
 let total = 0;
 let done = 0;
+let geocodingMode = "smart";
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function log(level, message) {
   parentPort.postMessage({ type: "log", level, message });
 }
 
-// Haversine distance in kilometres between two lat/lng pairs.
-function haversineKm(lat1, lon1, lat2, lon2) {
-  const R = 6371;
-  const toR = (d) => (d * Math.PI) / 180;
-  const dLat = toR(lat2 - lat1);
-  const dLon = toR(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toR(lat1)) * Math.cos(toR(lat2)) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+function tableExists(tableName) {
+  return !!db
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    )
+    .get(tableName);
 }
 
-// ── DB helpers ────────────────────────────────────────────────────────────────
-function ensureTable() {
+function ensureLocationSchema({ forceReindex = false } = {}) {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS locations (
-      file_id      INTEGER PRIMARY KEY,
-      country      TEXT,
-      subdivision  TEXT,
-      city         TEXT,
-      city_simple  TEXT,
-      population   INTEGER,
-      timezone     INTEGER,
-      feature_code TEXT,
-      geonameid    INTEGER
+    CREATE TABLE IF NOT EXISTS ${LOCATION_METADATA_TABLE} (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
     )
   `);
-  // Migrate existing DBs
-  try {
-    db.exec(`ALTER TABLE locations ADD COLUMN feature_code TEXT`);
-  } catch {}
-  try {
-    db.exec(`ALTER TABLE locations ADD COLUMN feature_code TEXT`);
-  } catch {}
-  try {
-    db.exec(`ALTER TABLE locations ADD COLUMN geonameid INTEGER`);
-  } catch {}
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_locations_file_id ON locations(file_id)
+
+  const existingColumns = tableExists("locations")
+    ? db.prepare("PRAGMA table_info(locations)").all().map((column) => column.name)
+    : [];
+  const expectedColumns = [
+    "file_id",
+    "locality_id",
+    "country",
+    "subdivision",
+    "city",
+    "local_name",
+    "english_name",
+    "subtype",
+    "admin_level",
+    "area",
+  ];
+  const needsSchemaMigration =
+    existingColumns.length !== expectedColumns.length ||
+    expectedColumns.some((column) => !existingColumns.includes(column));
+  const currentVersion = db
+    .prepare(
+      `SELECT value FROM ${LOCATION_METADATA_TABLE} WHERE key = 'geocoder_version'`,
+    )
+    .get()?.value;
+  const geocoderVersion = getLocationGeocoderVersion(geocodingMode);
+  const needsReindex =
+    forceReindex || needsSchemaMigration || currentVersion !== geocoderVersion;
+
+  db.transaction(() => {
+    if (needsSchemaMigration && tableExists("locations")) {
+      // Location rows are exclusively derived data. Legacy non-polygon rows
+      // are invalid for polygon containment, so rebuild only this table.
+      db.exec("DROP TABLE locations");
+    }
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS locations (
+        file_id      INTEGER PRIMARY KEY,
+        locality_id  INTEGER,
+        country      TEXT,
+        subdivision  TEXT,
+        city         TEXT,
+        local_name   TEXT,
+        english_name TEXT,
+        subtype      TEXT,
+        admin_level  INTEGER,
+        area         REAL
+      )
+    `);
+
+    if (needsReindex) {
+      db.exec("DELETE FROM locations");
+    }
+
+    db.prepare(`
+      INSERT INTO ${LOCATION_METADATA_TABLE} (key, value)
+      VALUES ('geocoder_version', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(geocoderVersion);
+  })();
+}
+
+function prepareStatements() {
+  // Invalid coordinates are intentionally selected too: they receive a null
+  // row so corrupt EXIF cannot cause an endless retry. Only valid coordinates
+  // are included in progress totals.
+  getNextFilesStmt = db.prepare(`
+    SELECT f.id, f.latitude, f.longitude
+    FROM files f
+    LEFT JOIN locations l ON l.file_id = f.id
+    WHERE f.latitude IS NOT NULL
+      AND f.longitude IS NOT NULL
+      AND l.file_id IS NULL
+    ORDER BY f.id
+    LIMIT ?
   `);
+
+  insertLocationStmt = db.prepare(`
+    INSERT OR REPLACE INTO locations
+      (
+        file_id,
+        locality_id,
+        country,
+        subdivision,
+        city,
+        local_name,
+        english_name,
+        subtype,
+        admin_level,
+        area
+      )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const validCoordinates = `
+    latitude IS NOT NULL
+    AND longitude IS NOT NULL
+    AND latitude BETWEEN -90 AND 90
+    AND longitude BETWEEN -180 AND 180
+  `;
+  countTotalStmt = db.prepare(`
+    SELECT COUNT(*) AS c
+    FROM files
+    WHERE ${validCoordinates}
+  `);
+  countDoneStmt = db.prepare(`
+    SELECT COUNT(*) AS c
+    FROM files f
+    JOIN locations l ON l.file_id = f.id
+    WHERE f.latitude IS NOT NULL
+      AND f.longitude IS NOT NULL
+      AND f.latitude BETWEEN -90 AND 90
+      AND f.longitude BETWEEN -180 AND 180
+  `);
+
+  writeBatch = db.transaction((files) => {
+    for (const file of files) {
+      resolveAndStore(file);
+    }
+  });
+}
+
+function isValidCoordinate(latitude, longitude) {
+  return (
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    longitude >= -180 &&
+    longitude <= 180
+  );
+}
+
+function resolveAndStore(file) {
+  let locality = null;
+
+  try {
+    if (isValidCoordinate(file.latitude, file.longitude)) {
+      locality = placesDB.reverseGeocodeOne(file.latitude, file.longitude, {
+        mode: geocodingMode,
+      });
+    }
+  } catch (error) {
+    // Still write the null row below so a malformed record never blocks the
+    // queue. The failure is visible in worker logs for diagnosis.
+    log("warn", `location lookup failed for file ${file.id}: ${error.message}`);
+  }
+
+  insertLocationStmt.run(
+    file.id,
+    locality?.id ?? null,
+    locality?.country ?? null,
+    locality?.region ?? null,
+    locality?.localName ?? null,
+    locality?.localName ?? null,
+    locality?.englishName ?? null,
+    locality?.subtype ?? null,
+    locality?.adminLevel ?? null,
+    locality?.area ?? null,
+  );
 }
 
 function refreshCounts() {
-  try {
-    // Total = all files that have GPS data (these are the ones we can resolve).
-    total =
-      db
-        .prepare(
-          `
-      SELECT COUNT(*) AS c FROM files
-      WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-    `,
-        )
-        .get()?.c ?? 0;
-
-    // Done = rows already in the locations table.
-    done =
-      db
-        .prepare(
-          `
-      SELECT COUNT(*) AS c FROM locations
-    `,
-        )
-        .get()?.c ?? 0;
-  } catch {}
+  total = countTotalStmt.get()?.c ?? 0;
+  done = countDoneStmt.get()?.c ?? 0;
 }
 
-/**
- * Returns the next file that has GPS data but no locations row yet.
- * We use LEFT JOIN rather than NOT IN to stay fast at scale.
- */
-function getNextFile() {
-  return (
-    db
-      .prepare(
-        `
-    SELECT f.id, f.latitude, f.longitude
-    FROM   files f
-    LEFT   JOIN locations l ON l.file_id = f.id
-    WHERE  f.latitude  IS NOT NULL
-      AND  f.longitude IS NOT NULL
-      AND  l.file_id   IS NULL
-    LIMIT  1
-  `,
-      )
-      .get() ?? null
-  );
-}
-
-// ── Geo lookup ────────────────────────────────────────────────────────────────
-/**
- * Bounding-box pre-filter:
- *   1 degree of latitude  ≈ 111 km  →  ±0.5° covers ±55 km (a bit more than MAX)
- *   1 degree of longitude ≈ 111 km × cos(lat)  →  use ±1° to be safe near poles
- *
- * After the pre-filter we do an exact haversine check on the handful of
- * candidates that remain, then pick the closest one.
- */
-let _nearestStmt = null;
-
-function getNearestCity(lat, lng) {
-  if (!_nearestStmt) {
-    // Prepared once; reused for every lookup.
-    _nearestStmt = geoDB.prepare(`
-      SELECT
-        name,
-        asciiname,
-        country_code,
-        admin1_code,
-        population,
-        timezone_id,
-        feature_code,
-        geonameid,
-        latitude,
-        longitude
-      FROM cities
-      WHERE latitude BETWEEN ? AND ?
-        AND longitude BETWEEN ? AND ?
-        AND feature_code IN ('PPL', 'PPLA', 'PPLA2', 'PPLA3', 'PPLA4', 'PPLC')
-        AND name NOT GLOB '*[0-9]*'
-    `);
-  }
-
-  const latDelta = 0.55; // ~61 km
-  const lngDelta = 1.0; // generous — corrected by haversine below
-
-  const candidates = _nearestStmt.all(
-    lat - latDelta,
-    lat + latDelta,
-    lng - lngDelta,
-    lng + lngDelta,
-  );
-
-  if (!candidates.length) return null;
-
-  let best = null;
-  let bestDist = Infinity;
-
-  for (const c of candidates) {
-    const dist = haversineKm(lat, lng, c.latitude, c.longitude);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = c;
-    }
-  }
-
-  if (bestDist > MAX_CITY_DISTANCE_KM) return null;
-
-  return best; // { name, country, subdivision, lat, lng }
-}
-
-// ── Progress emission ─────────────────────────────────────────────────────────
 function emitProgress() {
   refreshCounts();
   parentPort.postMessage({
@@ -212,128 +232,113 @@ function emitProgress() {
   });
 }
 
-// ── Insert helper ─────────────────────────────────────────────────────────────
-let _insertStmt = null;
-
-function insertLocation(
-  fileId,
-  country,
-  subdivision,
-  city,
-  citySimple,
-  population,
-  timezone,
-  featureCode,
-  geonameid,
-) {
-  if (!_insertStmt) {
-    _insertStmt = db.prepare(`
-      INSERT OR REPLACE INTO locations
-        (file_id, country, subdivision, city, city_simple, population, timezone, feature_code, geonameid)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-  }
-  _insertStmt.run(
-    fileId,
-    country ?? null,
-    subdivision ?? null,
-    city ?? null,
-    citySimple ?? null,
-    population ?? null,
-    timezone ?? null,
-    featureCode ?? null,
-    geonameid ?? null,
-  );
-}
-
-// ── Processing loop ───────────────────────────────────────────────────────────
-function scheduleLoop(delayMs = INTER_FILE_DELAY_MS) {
+function scheduleLoop(delayMs = 0) {
   clearTimeout(loopTimer);
   if (stopped) return;
+
   running = true;
-  loopTimer = setTimeout(() => loop(), delayMs);
+  loopTimer = setTimeout(processBatch, delayMs);
 }
 
-function loop() {
+function processBatch() {
   if (stopped || paused) {
     running = false;
     return;
   }
 
-  const file = getNextFile();
-
-  if (!file) {
-    // Nothing left — re-check periodically for newly-indexed files.
+  const files = getNextFilesStmt.all(BATCH_SIZE);
+  if (!files.length) {
     refreshCounts();
     emitProgress();
     running = false;
     loopTimer = setTimeout(() => {
-      running = true;
-      loop();
+      if (!stopped && !paused) scheduleLoop();
     }, RECHECK_INTERVAL_MS);
     return;
   }
 
   try {
-    const city = getNearestCity(file.latitude, file.longitude);
-
-    // Always write a row — even when no city was found — so we don't keep
-    // re-processing the same file.  A null city means "GPS present, but no
-    // city within MAX_CITY_DISTANCE_KM."
-    insertLocation(
-      file.id,
-      city?.country_code ?? null,
-      city?.admin1_code ?? null,
-      city?.name ?? null,
-      city?.asciiname !== city?.name ? (city?.asciiname ?? null) : null,
-      city?.population ?? null,
-      city?.timezone_id ?? null,
-      city?.feature_code ?? null,
-      city?.geonameid ?? null,
-    );
-
-    done++;
-  } catch (err) {
-    // Log and skip; the file won't be retried (LEFT JOIN will still find it
-    // because we only write on success — but to avoid infinite retries on
-    // truly broken rows we insert a null-city record anyway).
-    log("warn", `location lookup failed for file ${file.id}: ${err.message}`);
-    try {
-      insertLocation(file.id, null, null, null, null, null, null, null, null);
-    } catch {}
+    writeBatch(files);
+  } catch (error) {
+    // A transaction-level SQLite problem should not spin at full speed. Leave
+    // the files eligible so they can be retried after the database recovers.
+    log("warn", `location batch failed: ${error.message}`);
+    scheduleLoop(1_000);
+    return;
   }
 
-  // Emit progress every 50 files to keep the UI responsive without flooding IPC.
-  if (done % 50 === 0) emitProgress();
+  batchesSinceProgress++;
+  if (batchesSinceProgress >= PROGRESS_BATCH_INTERVAL) {
+    batchesSinceProgress = 0;
+    emitProgress();
+  }
 
-  scheduleLoop(INTER_FILE_DELAY_MS);
+  // Yield between bounded batches so pause/stop messages are handled promptly
+  // without the old 50 ms artificial delay per file.
+  scheduleLoop();
 }
 
-// ── Main-thread message handler ───────────────────────────────────────────────
+function regenerateLocationData(mode) {
+  geocodingMode = normalizeLocationSelectionMode(mode);
+  clearTimeout(loopTimer);
+  running = false;
+  batchesSinceProgress = 0;
+
+  // The rows are derived solely from the current polygon-selection mode.
+  // Clearing them in one transaction before queuing new work prevents a view
+  // from ever mixing Smart and Smallest results.
+  ensureLocationSchema({ forceReindex: true });
+  prepareStatements();
+  emitProgress();
+  log("info", "regenerating locations using " + geocodingMode + " selection");
+
+  if (!paused) {
+    scheduleLoop();
+  }
+}
+
+function closeDatabases() {
+  try {
+    placesDB?.close();
+  } catch {}
+  try {
+    db?.close();
+  } catch {}
+  placesDB = null;
+  db = null;
+}
+
 parentPort.on("message", (msg) => {
   switch (msg.type) {
     case "start": {
-      const Database = require("better-sqlite3");
+      stopped = false;
+      paused = false;
+      batchesSinceProgress = 0;
+      geocodingMode = normalizeLocationSelectionMode(msg.selectionMode);
 
-      db = new Database(msg.dbPath);
-      geoDB = new Database(msg.geoDbPath, {
-        readonly: true,
-        fileMustExist: true,
-      });
+      try {
+        db = new Database(msg.dbPath);
+        placesDB = new OfflineGeocoder(msg.placesDbPath);
+        ensureLocationSchema({ forceReindex: !!msg.forceReindex });
+        prepareStatements();
+        emitProgress();
 
-      ensureTable();
-      refreshCounts();
-      emitProgress();
-
-      log(
-        "info",
-        `location-worker started — ${total - done} file(s) to resolve`,
-      );
-
-      // Kick off the loop immediately (small delay to let the main window settle).
-      scheduleLoop(2_000);
+        log("info", `location-worker started — ${total - done} file(s) to resolve`);
+        // Preserve the original short startup grace period for the main window.
+        scheduleLoop(2_000);
+      } catch (error) {
+        log("error", `location-worker failed to start: ${error.message}`);
+        closeDatabases();
+        throw error;
+      }
       break;
     }
+
+    case "regenerate":
+      if (!stopped && db) {
+        regenerateLocationData(msg.selectionMode);
+      }
+      break;
 
     case "pause":
       paused = true;
@@ -346,7 +351,7 @@ parentPort.on("message", (msg) => {
         paused = false;
         log("info", "resumed");
         emitProgress();
-        scheduleLoop(100);
+        scheduleLoop();
       }
       break;
 
@@ -355,6 +360,7 @@ parentPort.on("message", (msg) => {
       paused = false;
       clearTimeout(loopTimer);
       running = false;
+      closeDatabases();
       log("info", "stopped");
       break;
   }

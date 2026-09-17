@@ -20,6 +20,10 @@ const heicDecode = require("heic-decode");
 const { Worker } = require("worker_threads");
 const EmbeddingService = require("./embedding-service");
 const LocationService  = require("./location-service");
+const {
+  getLocationGeocoderVersion,
+  normalizeLocationSelectionMode,
+} = require("./location-schema");
 const crypto = require("crypto");
 const { parse } = require("csv-parse/sync");
 const AdmZip = require("adm-zip");
@@ -37,6 +41,17 @@ const normalizeCountries = (country) =>
     .split(",")
     .map((c) => c.trim().toUpperCase())
     .filter(Boolean);
+
+function locationDisplayNameExpression(nameDisplay, tableAlias = "") {
+  const prefix = tableAlias ? tableAlias + "." : "";
+  const localName = "NULLIF(" + prefix + "local_name, '')";
+  const englishName = "NULLIF(" + prefix + "english_name, '')";
+  const legacyCity = prefix + "city";
+
+  return nameDisplay === "local"
+    ? "COALESCE(" + localName + ", " + englishName + ", " + legacyCity + ")"
+    : "COALESCE(" + englishName + ", " + localName + ", " + legacyCity + ")";
+}
 
 const countriesCsvPath = path.join(__dirname, 'public/countries.csv');
 const countriesCsv = fs.readFileSync(countriesCsvPath, "utf-8");
@@ -431,6 +446,10 @@ const defaultConfig = {
   placesSubtitles: "count",
   placesMinCount: 1,
   placesExcludeFlights: false,
+  placesSelectionMode: "smart",
+  placesNameDisplay: "english",
+  placesRegionNames: "english",
+  placesCountryNames: "name",
   explorerDateScroll: true,
   mapStyle: "default",
   tableStyle: "comfortable",
@@ -482,7 +501,7 @@ function invalidateProgressSnapshots() {
   progressSnapshots.clear();
 }
 
-function getProgressSnapshot(type) {
+function getProgressSnapshot(type, locationGeocoderVersion = null) {
   const cached = progressSnapshots.get(type);
   if (cached) return Promise.resolve(cached);
 
@@ -491,7 +510,7 @@ function getProgressSnapshot(type) {
 
   const load = new Promise((resolve) => {
     const worker = new Worker(path.join(__dirname, "progress-snapshot-worker.js"), {
-      workerData: { dbPath, type },
+      workerData: { dbPath, type, locationGeocoderVersion },
     });
     let settled = false;
 
@@ -644,13 +663,21 @@ function startLocationService() {
   if (locationService) return;
   initDatabase();
 
-  // geo.db lives at the project root in dev, or next to app.asar in production.
-  const geoDbPath = app.isPackaged
-    ? path.join(process.resourcesPath, "geo.db")
-    : path.join(__dirname, "geo.db");
+  // places.db lives at the project root in dev, or in application resources
+  // in packaged builds.
+  const placesDbPath = app.isPackaged
+    ? path.join(process.resourcesPath, "places.db")
+    : path.join(__dirname, "places.db");
 
-  locationService = new LocationService(db, dataDir, geoDbPath, () => mainWindow);
-  if (readConfig().locationIndexingPaused) {
+  const config = readConfig();
+  locationService = new LocationService(
+    db,
+    dataDir,
+    placesDbPath,
+    () => mainWindow,
+    normalizeLocationSelectionMode(config.placesSelectionMode),
+  );
+  if (config.locationIndexingPaused) {
     locationService.setInitialPaused(true);
     return;
   }
@@ -781,11 +808,31 @@ ipcMain.handle("get-settings", async () => {
 ipcMain.handle("save-settings", async (event, settings) => {
   try {
     const currentConfig = readConfig();
+    const previousSelectionMode = normalizeLocationSelectionMode(
+      currentConfig.placesSelectionMode,
+    );
+    const nextSelectionMode = normalizeLocationSelectionMode(
+      settings?.placesSelectionMode ?? previousSelectionMode,
+    );
+    const nextNameDisplay =
+      settings?.placesNameDisplay === "local" ? "local" : "english";
+    const nextRegionNames =
+      settings?.placesRegionNames === "local"
+        ? "local"
+        : settings?.placesRegionNames === "code"
+          ? "code"
+          : "english";
+    const nextCountryNames =
+      settings?.placesCountryNames === "code" ? "code" : "name";
     fs.writeFileSync(
       configPath,
       JSON.stringify(
         {
           ...settings,
+          placesSelectionMode: nextSelectionMode,
+          placesNameDisplay: nextNameDisplay,
+          placesRegionNames: nextRegionNames,
+          placesCountryNames: nextCountryNames,
           smartSearchPaused: currentConfig.smartSearchPaused,
           locationIndexingPaused: currentConfig.locationIndexingPaused,
         },
@@ -794,7 +841,15 @@ ipcMain.handle("save-settings", async (event, settings) => {
       ),
       "utf8",
     );
-    return { success: true };
+    if (previousSelectionMode !== nextSelectionMode) {
+      invalidateProgressSnapshots();
+      if (!locationService) startLocationService();
+      locationService?.regenerate(nextSelectionMode);
+    }
+    return {
+      success: true,
+      locationsRegenerating: previousSelectionMode !== nextSelectionMode,
+    };
   } catch (err) {
     console.error(err);
     return { success: false, error: err.message };
@@ -931,11 +986,12 @@ function buildWhereClause(rawFilters = {}, options = {}) {
           WHERE country     LIKE ?
              OR subdivision LIKE ?
              OR city        LIKE ?
-             OR city_simple  LIKE ?
+             OR local_name  LIKE ?
+             OR english_name LIKE ?
         )
       `);
     
-      params.push(term, term, term, term);
+      params.push(term, term, term, term, term);
     }
   }
 
@@ -4214,7 +4270,12 @@ ipcMain.handle("embedding:has-embedding", async (event, fileId) => {
 /** Current progress snapshot */
 ipcMain.handle("location:get-status", async () => {
   if (!locationService || !locationService._worker) {
-    const progress = await getProgressSnapshot("location");
+    const progress = await getProgressSnapshot(
+      "location",
+      getLocationGeocoderVersion(
+        normalizeLocationSelectionMode(readConfig().placesSelectionMode),
+      ),
+    );
     const serviceStatus = locationService?.getStatus();
     return {
       ...progress,
@@ -4261,6 +4322,9 @@ ipcMain.handle("location:resume", () => {
 ipcMain.handle("location:get-for-files", async (event, fileIds) => {
   try {
     initDatabase();
+    const displayName = locationDisplayNameExpression(
+      readConfig().placesNameDisplay,
+    );
 
     if (Array.isArray(fileIds) && fileIds.length > 0) {
       // Chunk to stay under SQLite's 999-variable limit.
@@ -4271,7 +4335,14 @@ ipcMain.handle("location:get-for-files", async (event, fileIds) => {
         const placeholders = chunk.map(() => "?").join(",");
         rows.push(
           ...db
-            .prepare(`SELECT file_id, country, subdivision, city FROM locations WHERE file_id IN (${placeholders})`)
+            .prepare(
+              "SELECT file_id, country, subdivision, " +
+                displayName +
+                " AS city, local_name, english_name, subtype, admin_level, area " +
+                "FROM locations WHERE file_id IN (" +
+                placeholders +
+                ")",
+            )
             .all(...chunk)
         );
       }
@@ -4279,7 +4350,13 @@ ipcMain.handle("location:get-for-files", async (event, fileIds) => {
     }
 
     // No filter — return everything (used by stats / map views).
-    const rows = db.prepare("SELECT file_id, country, subdivision, city FROM locations").all();
+    const rows = db
+      .prepare(
+        "SELECT file_id, country, subdivision, " +
+          displayName +
+          " AS city, local_name, english_name, subtype, admin_level, area FROM locations",
+      )
+      .all();
     return { success: true, rows };
   } catch (err) {
     console.error("location:get-for-files error:", err);
@@ -4446,7 +4523,7 @@ ipcMain.handle("location:get-countries", async (event, currentSettings = {}) => 
 
 // ─── Regions ──────────────────────────────────────────────────────────────────
 //
-// Source: locations.subdivision  (ISO subdivision code, e.g. "CA" or "03")
+// Source: locations.subdivision (locality region/subdivision code)
 //         joined back to files for thumbnails & IDs
 // Returns: [{ country, subdivision, count, ids, thumbnails }]
 
@@ -4467,7 +4544,6 @@ ipcMain.handle("location:get-regions", async (event, currentSettings = {}) => {
         SELECT
           l.country,
           l.subdivision,
-          l.population,
           f.id,
           f.create_date,
           f.file_type,
@@ -4490,7 +4566,6 @@ ipcMain.handle("location:get-regions", async (event, currentSettings = {}) => {
         map[key] = {
           country: row.country,
           subdivision: row.subdivision,
-          population: row.population || 0,
           count: 0,
           ids: [],
           lastVisit: 0,
@@ -4530,7 +4605,6 @@ ipcMain.handle("location:get-regions", async (event, currentSettings = {}) => {
         return {
           country: entry.country,
           subdivision: entry.subdivision,
-          population: entry.population,
           count: entry.count,
           ids: entry.ids,
           lastVisit: entry.lastVisit,
@@ -4540,8 +4614,6 @@ ipcMain.handle("location:get-regions", async (event, currentSettings = {}) => {
 
     if (placesSortBy === "last_visit") {
       result.sort((a, b) => b.lastVisit - a.lastVisit);
-    } else if (placesSortBy === "population") {
-      result.sort((a, b) => (b.population || 0) - (a.population || 0));
     } else if (placesSortBy === "alphabetical") {
       result.sort((a, b) => a.subdivision.localeCompare(b.subdivision));
     } else {
@@ -4557,7 +4629,7 @@ ipcMain.handle("location:get-regions", async (event, currentSettings = {}) => {
 
 // ─── Cities ───────────────────────────────────────────────────────────────────
 //
-// Source: locations.city  (nearest city / place name)
+// Source: locations.city (containing locality display name)
 // Returns: [{ country, subdivision, city, count, ids, thumbnails }]
 
 ipcMain.handle("location:get-cities", async (event, currentSettings = {}) => {
@@ -4569,7 +4641,12 @@ ipcMain.handle("location:get-cities", async (event, currentSettings = {}) => {
       placesThumbnails = "random",
       placesMinCount = 1,
       placesExcludeFlights = false,
+      placesNameDisplay = "english",
     } = currentSettings;
+    const cityDisplayName = locationDisplayNameExpression(
+      placesNameDisplay,
+      "l",
+    );
 
     const rows = db
       .prepare(
@@ -4577,16 +4654,15 @@ ipcMain.handle("location:get-cities", async (event, currentSettings = {}) => {
         SELECT
           l.country,
           l.subdivision,
-          l.population,
-          l.city,
+          ${cityDisplayName} AS city,
           f.id,
           f.create_date,
           f.file_type,
           f.thumbnail_path
         FROM locations l
         JOIN files f ON f.id = l.file_id
-        WHERE l.city IS NOT NULL
-          AND l.city != ''
+        WHERE ${cityDisplayName} IS NOT NULL
+          AND ${cityDisplayName} != ''
           ${placesExcludeFlights ? "AND (f.altitude IS NULL OR f.altitude <= 9000)" : ""}
       `
       )
@@ -4601,7 +4677,6 @@ ipcMain.handle("location:get-cities", async (event, currentSettings = {}) => {
         map[key] = {
           country: row.country,
           subdivision: row.subdivision,
-          population: row.population || 0,
           city: row.city,
           count: 0,
           ids: [],
@@ -4643,7 +4718,6 @@ ipcMain.handle("location:get-cities", async (event, currentSettings = {}) => {
         return {
           country: entry.country,
           subdivision: entry.subdivision,
-          population: entry.population,
           city: entry.city,
           count: entry.count,
           ids: entry.ids,
@@ -4654,8 +4728,6 @@ ipcMain.handle("location:get-cities", async (event, currentSettings = {}) => {
 
     if (placesSortBy === "last_visit") {
       result.sort((a, b) => b.lastVisit - a.lastVisit);
-    } else if (placesSortBy === "population") {
-      result.sort((a, b) => (b.population || 0) - (a.population || 0));
     } else if (placesSortBy === "alphabetical") {
       result.sort((a, b) => a.city.localeCompare(b.city));
     } else {

@@ -194,6 +194,9 @@ export default function PreviewPanel({
   const imgRef = useRef(null);
   const lastMousePos = useRef(null);
   const previousMediaId = useRef(null);
+  const previousPlaceNameDisplay = useRef(
+    currentSettings?.placesNameDisplay ?? "english",
+  );
 
   const [isPlaying, setIsPlaying] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
@@ -223,6 +226,8 @@ export default function PreviewPanel({
   liveDurationRef.current = duration;
   const progress = duration > 0 ? Math.min(currentTime / duration, 1) : 0;
   const isVideo = item?.file_type?.startsWith("video");
+  const placeNameDisplay = currentSettings?.placesNameDisplay ?? "english";
+  const countryNameDisplay = currentSettings?.placesCountryNames ?? "name";
   const fileUrl = item
     ? `http://localhost:54055/files/${encodeURIComponent(item.path)}`
     : null;
@@ -326,6 +331,30 @@ export default function PreviewPanel({
       };
     }
   }, [item]);
+
+  // Name preference changes are a display-only update. Refresh the currently
+  // visible Place without resetting playback or reprocessing its GPS data.
+  useEffect(() => {
+    if (previousPlaceNameDisplay.current === placeNameDisplay) return;
+    previousPlaceNameDisplay.current = placeNameDisplay;
+    if (!item?.id) return;
+
+    window.electron.ipcRenderer
+      .invoke("location:get-for-files", [item.id])
+      .then((result) => {
+        if (!result.success || result.rows.length === 0) {
+          setItemPlace(null);
+          return;
+        }
+
+        const location = result.rows[0];
+        setItemPlace(location.city || location.subdivision || null);
+      })
+      .catch((err) => {
+        console.error("Failed to refresh displayed place:", err);
+        setItemPlace(null);
+      });
+  }, [item?.id, placeNameDisplay]);
 
   // ── Tags ───────────────────────────────────────────────────────────────────
 
@@ -677,7 +706,13 @@ export default function PreviewPanel({
         />
         <MetaRow
           label="Country"
-          value={item.country ? itemCountry : null}
+          value={
+            item.country
+              ? countryNameDisplay === "code"
+                ? String(item.country).toUpperCase()
+                : itemCountry
+              : null
+          }
           visible={isMetadataVisible("country")}
         />
         <MetaRow

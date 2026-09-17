@@ -63,6 +63,8 @@
       "**/*",
       "!**/dist/**/*",
       "!**/*.map",
+      "!geo.db",
+      "!places.db",
       "database.js",
       "node_modules/**/*",
       "package.json",
@@ -75,6 +77,10 @@
       {
         "from": "models",
         "to": "models"
+      },
+      {
+        "from": "places.db",
+        "to": "places.db"
       }
     ],
     "nsis": {

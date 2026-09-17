@@ -2,35 +2,54 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Grid } from "react-virtualized";
 import "react-virtualized/styles.css";
 
-// ─── Subdivision CSV loader ───────────────────────────────────────────────────
-let subdivisionMap = null;
+// ─── ISO 3166-2 region data loader ────────────────────────────────────────────
+let iso3166Data = null;
 
-async function loadSubdivisions() {
-  if (subdivisionMap) return subdivisionMap;
+async function loadIso3166Data() {
+  if (iso3166Data) return iso3166Data;
   try {
     const raw = await window.electron.ipcRenderer.invoke(
       "read-file",
-      "public/subdivisions.csv",
+      "public/iso3166-2.json",
     );
-    subdivisionMap = new Map();
-    for (const line of raw.split(/\r?\n/)) {
-      const parts = line.split(";");
-      if (parts.length < 2) continue;
-      const key = parts[0].replace(".", "-").trim().toUpperCase();
-      const name = parts[1].trim();
-      if (key && name) subdivisionMap.set(key, name);
-    }
+    iso3166Data = JSON.parse(raw);
   } catch (err) {
-    console.warn("Could not load subdivisions.csv:", err);
-    subdivisionMap = new Map();
+    console.warn("Could not load iso3166-2.json:", err);
+    iso3166Data = {};
   }
-  return subdivisionMap;
+  return iso3166Data;
 }
 
-function resolveSubdivisionName(country, code, map) {
-  if (!map || !country || !code) return code;
-  const key = `${country.toUpperCase()}-${code.toUpperCase()}`;
-  return map.get(key) || code;
+function normalizeCode(code) {
+  return (code || "").trim().toUpperCase();
+}
+
+function getSubdivisionCode(country, code) {
+  const countryCode = normalizeCode(country);
+  const subdivisionCode = normalizeCode(code);
+  if (!countryCode || !subdivisionCode) return code;
+  return subdivisionCode.startsWith(countryCode + "-")
+    ? subdivisionCode
+    : countryCode + "-" + subdivisionCode;
+}
+
+function getSubdivision(data, country, code) {
+  if (!data || !country || !code) return null;
+  const countryCode = normalizeCode(country);
+  const subdivisionCode = getSubdivisionCode(countryCode, code);
+  return data[countryCode]?.[subdivisionCode] || null;
+}
+
+function getEnglishSubdivisionName(subdivision) {
+  const localOtherName = subdivision?.localOtherName;
+  if (typeof localOtherName !== "string") return subdivision?.name;
+
+  const englishName = localOtherName
+    .split(",")
+    .map((entry) => entry.trim())
+    .find((entry) => /\s*\(eng\)\s*$/i.test(entry));
+
+  return englishName?.replace(/\s*\(eng\)\s*$/i, "") || subdivision.name;
 }
 
 // ─── Country name helper ──────────────────────────────────────────────────────
@@ -51,6 +70,19 @@ async function getCountryName(code) {
 }
 
 // ─── Grid layout constants ────────────────────────────────────────────────────
+async function getCountryLabel(code, preference) {
+  return preference === "code" ? normalizeCode(code) : getCountryName(code);
+}
+
+function getRegionLabel(country, code, data, preference) {
+  if (preference === "code") return getSubdivisionCode(country, code);
+
+  const subdivision = getSubdivision(data, country, code);
+  return preference === "local"
+    ? subdivision?.name || code
+    : getEnglishSubdivisionName(subdivision) || code;
+}
+
 const CARD_MIN_WIDTH = 180;
 const CARD_HEIGHT = 220;
 const GRID_GAP = 12;
@@ -160,9 +192,12 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
   const [selectedTab, setSelectedTab] = useState("Countries");
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
-  const [subdivisions, setSubdivisions] = useState(null);
+  const [iso3166, setIso3166] = useState(null);
   const {
     placesSubtitles = "count",
+    placesNameDisplay = "english",
+    placesRegionNames = "english",
+    placesCountryNames = "name",
   } = currentSettings;
 
   // NEW: container sizing
@@ -170,7 +205,7 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
   const [size, setSize] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
-    loadSubdivisions().then(setSubdivisions);
+    loadIso3166Data().then(setIso3166);
   }, []);
 
   // NEW: ResizeObserver instead of AutoSizer
@@ -192,7 +227,13 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
     if (selectedTab === "Countries") fetchCountries();
     if (selectedTab === "Regions") fetchRegions();
     if (selectedTab === "Cities") fetchCities();
-  }, [selectedTab, subdivisions]);
+  }, [
+    selectedTab,
+    iso3166,
+    placesNameDisplay,
+    placesRegionNames,
+    placesCountryNames,
+  ]);
 
   const fetchCountries = async () => {
     setLoading(true);
@@ -204,7 +245,7 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
       const enriched = await Promise.all(
         res.data.map(async (row) => ({
           ...row,
-          label: await getCountryName(row.country),
+          label: await getCountryLabel(row.country, placesCountryNames),
         })),
       );
       setItems(enriched);
@@ -214,7 +255,7 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
   };
 
   const fetchRegions = async () => {
-    if (!subdivisions) return;
+    if (!iso3166) return;
     setLoading(true);
 
     try {
@@ -225,12 +266,16 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
 
       const enriched = await Promise.all(
         res.data.map(async (row) => {
-          const regionName = resolveSubdivisionName(
+          const regionName = getRegionLabel(
             row.country,
             row.subdivision,
-            subdivisions,
+            iso3166,
+            placesRegionNames,
           );
-          const countryName = await getCountryName(row.country);
+          const countryName = await getCountryLabel(
+            row.country,
+            placesCountryNames,
+          );
 
           return {
             ...row,
@@ -257,16 +302,20 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
 
       const enriched = await Promise.all(
         res.data.map(async (row) => {
-          let subtitle = await getCountryName(row.country);
+          let subtitle = await getCountryLabel(
+            row.country,
+            placesCountryNames,
+          );
 
-          if (row.subdivision && subdivisions) {
-            const regionName = resolveSubdivisionName(
+          if (row.subdivision && iso3166) {
+            const regionName = getRegionLabel(
               row.country,
               row.subdivision,
-              subdivisions,
+              iso3166,
+              placesRegionNames,
             );
 
-            if (regionName && regionName !== row.subdivision) {
+            if (regionName) {
               subtitle = `${regionName}, ${subtitle}`;
             }
           }
