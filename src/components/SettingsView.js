@@ -173,9 +173,15 @@ const SmartSearchStatus = () => {
     percentage: 0,
     paused: false,
     pausePending: false,
+    resource: {
+      id: "smart-search",
+      state: "download-required",
+      downloadSizeLabel: "107 MB",
+    },
   });
   const [loading, setLoading] = useState(true);
   const [isToggling, setIsToggling] = useState(false);
+  const [isRequestingDownload, setIsRequestingDownload] = useState(false);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -205,6 +211,17 @@ const SmartSearchStatus = () => {
     }
   }, [isToggling, status.paused, status.pausePending, fetchStatus]);
 
+  const downloadResource = useCallback(async () => {
+    if (isRequestingDownload) return;
+    setIsRequestingDownload(true);
+    try {
+      await window.electron.ipcRenderer.invoke("resource:download", "smart-search");
+      await fetchStatus();
+    } finally {
+      setIsRequestingDownload(false);
+    }
+  }, [fetchStatus, isRequestingDownload]);
+
   // Poll every 4 seconds
   useEffect(() => {
     fetchStatus();
@@ -216,7 +233,10 @@ const SmartSearchStatus = () => {
   useEffect(() => {
     const handler = (data) => {
       if (data) {
-        setStatus(data);
+        setStatus((current) => ({
+          ...data,
+          resource: data.resource ?? current.resource,
+        }));
         if (!data.pausePending) setIsToggling(false);
       }
       setLoading(false);
@@ -224,9 +244,29 @@ const SmartSearchStatus = () => {
     return window.electron.ipcRenderer.on("embedding-progress", handler);
   }, []);
 
+  useEffect(() => {
+    const handler = (resource) => {
+      if (resource?.id === "smart-search") {
+        setStatus((current) => ({ ...current, resource }));
+        setLoading(false);
+      }
+    };
+    return window.electron.ipcRenderer.on("resource-status", handler);
+  }, []);
+
   const isComplete = status.total > 0 && status.done >= status.total;
   const percentage =
     status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
+  const resource = status.resource ?? {};
+  const resourceState = resource.state ?? "download-required";
+  const resourceBusy =
+    resourceState === "downloading" || resourceState === "extracting";
+  const resourceUnavailable =
+    resourceState === "download-required" || resourceState === "download-failed";
+  const showResourceProgress = resourceBusy;
+  const displayPercentage = showResourceProgress
+    ? resource.progressPercent ?? 0
+    : percentage;
 
   // ── Determine status label & colour ──
   let statusLabel;
@@ -235,6 +275,18 @@ const SmartSearchStatus = () => {
   if (loading) {
     statusLabel = "Checking…";
     statusColor = "#888";
+  } else if (resourceState === "download-required") {
+    statusLabel = "Download required";
+    statusColor = "#ffd577";
+  } else if (resourceState === "downloading") {
+    statusLabel = `Downloading ${resource.progressPercent ?? 0}%`;
+    statusColor = "#a78bfa";
+  } else if (resourceState === "extracting") {
+    statusLabel = "Extracting/installing...";
+    statusColor = "#a78bfa";
+  } else if (resourceState === "download-failed") {
+    statusLabel = "Download failed";
+    statusColor = "#ff9a9a";
   } else if (status.initError) {
     statusLabel = "Error loading model";
     statusColor = "#ff9a9a";
@@ -245,10 +297,10 @@ const SmartSearchStatus = () => {
     statusLabel = "Loading CLIP model…";
     statusColor = "#ffd577";
   } else if (isComplete) {
-    statusLabel = "Complete";
+    statusLabel = "Ready";
     statusColor = "#d8d8d8";
   } else if (status.total === 0) {
-    statusLabel = "No images indexed yet";
+    statusLabel = "Ready - no images indexed yet";
     statusColor = "#888";
   } else {
     statusLabel = `Indexing in background… ${percentage}%`;
@@ -268,14 +320,18 @@ const SmartSearchStatus = () => {
       </div>
 
       {/* Progress bar */}
-      {status.total > 0 && (
+      {(showResourceProgress || status.total > 0) && (
         <>
           <div className="smart-search-status-bar-track">
             <div
               className="smart-search-status-bar-fill"
               style={{
-                width: `${percentage}%`,
-                backgroundColor: isComplete ? "#4caf82" : "#a78bfa",
+                width: `${displayPercentage}%`,
+                backgroundColor: showResourceProgress
+                  ? "#a78bfa"
+                  : isComplete
+                    ? "#4caf82"
+                    : "#a78bfa",
               }}
             />
           </div>
@@ -283,23 +339,47 @@ const SmartSearchStatus = () => {
       )}
 
       <div className="smart-search-status-counts-row">
-        {status.total > 0 && (
+        {showResourceProgress ? (
+          <div className="smart-search-status-counts">
+            {resource.downloadedBytes
+              ? `${formatBytes(resource.downloadedBytes)} / ${formatBytes(resource.totalBytes)}`
+              : "Preparing download..."}
+          </div>
+        ) : status.total > 0 ? (
           <div className="smart-search-status-counts">
             {status.done.toLocaleString()} / {status.total.toLocaleString()} images
           </div>
+        ) : null}
+        {resourceUnavailable ? (
+          <button
+            className="smart-search-status-button"
+            onClick={downloadResource}
+            disabled={isRequestingDownload}
+          >
+            Download ({resource.downloadSizeLabel ?? "107 MB"})
+          </button>
+        ) : resourceBusy ? (
+          <button className="smart-search-status-button" disabled>
+            {resourceState === "downloading"
+              ? `Downloading ${resource.progressPercent ?? 0}%`
+              : "Installing..."}
+          </button>
+        ) : (
+          <button
+            className="smart-search-status-button"
+            onClick={togglePaused}
+            disabled={isToggling || status.pausePending}
+          >
+            {status.paused ? "Resume" : "Pause"}
+          </button>
         )}
-        <button
-          className="smart-search-status-button"
-          onClick={togglePaused}
-          disabled={isToggling || status.pausePending}
-        >
-          {status.paused ? "Resume" : "Pause"}
-        </button>
       </div>
 
       {/* Error detail */}
-      {status.initError && (
-        <div className="smart-search-status-error">{status.initError}</div>
+      {(resource.error || status.initError) && (
+        <div className="smart-search-status-error">
+          {resource.error || status.initError}
+        </div>
       )}
 
     </div>
@@ -345,8 +425,15 @@ const SettingsView = ({
     percentage: 0,
     paused: false,
     pausePending: false,
+    resource: {
+      id: "places",
+      state: "download-required",
+      downloadSizeLabel: "541 MB",
+    },
   });
   const [isTogglingLocation, setIsTogglingLocation] = useState(false);
+  const [isRequestingLocationDownload, setIsRequestingLocationDownload] =
+    useState(false);
 
   const ipc = useCallback(
     (channel, ...args) => window.electron.ipcRenderer.invoke(channel, ...args),
@@ -380,6 +467,52 @@ const SettingsView = ({
     ipc,
     fetchLocationStatus,
   ]);
+
+  const downloadLocationResource = useCallback(async () => {
+    if (isRequestingLocationDownload) return;
+    setIsRequestingLocationDownload(true);
+    try {
+      await ipc("resource:download", "places");
+      await fetchLocationStatus();
+    } finally {
+      setIsRequestingLocationDownload(false);
+    }
+  }, [fetchLocationStatus, ipc, isRequestingLocationDownload]);
+
+  const locationResource = locationStatus.resource ?? {};
+  const locationResourceState = locationResource.state ?? "download-required";
+  const locationResourceBusy =
+    locationResourceState === "downloading" ||
+    locationResourceState === "extracting";
+  const locationResourceUnavailable =
+    locationResourceState === "download-required" ||
+    locationResourceState === "download-failed";
+  const locationIndexPercentage =
+    locationStatus.total > 0
+      ? Math.round((locationStatus.done / locationStatus.total) * 100)
+      : 0;
+  const locationProgressPercentage = locationResourceBusy
+    ? locationResource.progressPercent ?? 0
+    : locationIndexPercentage;
+  let locationStatusLabel = "Ready";
+  let locationStatusColor = "#8f8f8f";
+  if (locationResourceState === "download-required") {
+    locationStatusLabel = "Download required";
+    locationStatusColor = "#ffd577";
+  } else if (locationResourceState === "downloading") {
+    locationStatusLabel = `Downloading ${locationResource.progressPercent ?? 0}%`;
+    locationStatusColor = "#a78bfa";
+  } else if (locationResourceState === "extracting") {
+    locationStatusLabel = "Extracting/installing...";
+    locationStatusColor = "#a78bfa";
+  } else if (locationResourceState === "download-failed") {
+    locationStatusLabel = "Download failed";
+    locationStatusColor = "#ff9a9a";
+  } else if (locationStatus.paused) {
+    locationStatusLabel = "Paused";
+  } else if (locationStatus.total > 0) {
+    locationStatusLabel = `${locationIndexPercentage}%`;
+  }
 
   const saveSettings = useCallback(
     async (next) => {
@@ -481,16 +614,28 @@ const SettingsView = ({
     // optional: live updates if you later emit events
     const handler = (data) => {
       if (data) {
-        setLocationStatus(data);
+        setLocationStatus((current) => ({
+          ...data,
+          resource: data.resource ?? current.resource,
+        }));
         if (!data.pausePending) setIsTogglingLocation(false);
       }
     };
 
     const unsubscribe = window.electron.ipcRenderer.on("location-progress", handler);
+    const unsubscribeResource = window.electron.ipcRenderer.on(
+      "resource-status",
+      (resource) => {
+        if (resource?.id === "places") {
+          setLocationStatus((current) => ({ ...current, resource }));
+        }
+      },
+    );
 
     return () => {
       clearInterval(interval);
       unsubscribe?.();
+      unsubscribeResource?.();
     };
   }, [fetchLocationStatus]);
 
@@ -722,6 +867,7 @@ const SettingsView = ({
 
   const openAppLocation = () => ipc("open-orbit-location");
   const openDataLocation = () => ipc("open-data-location");
+  const openResourcesLocation = () => ipc("open-resources-location");
   const toggleFullscreen = () => ipc("toggle-fullscreen");
 
   // ─── Render ──────────────────────────────────────────────────────────────────
@@ -1258,23 +1404,19 @@ const SettingsView = ({
 
                   <span
                     className="smart-search-status-badge"
-                    style={{ color: "#8f8f8f" }}
+                    style={{ color: locationStatusColor }}
                   >
-                    {locationStatus.paused
-                      ? "Paused"
-                      : locationStatus.total === 0
-                        ? "Idle"
-                        : `${Math.round((locationStatus.done / locationStatus.total) * 100)}%`}
+                    {locationStatusLabel}
                   </span>
                 </div>
 
-                {locationStatus.total > 0 && (
+                {(locationResourceBusy || locationStatus.total > 0) && (
                   <>
                     <div className="smart-search-status-bar-track">
                       <div
                         className="smart-search-status-bar-fill"
                         style={{
-                          width: `${(locationStatus.done / locationStatus.total) * 100}%`,
+                          width: `${locationProgressPercentage}%`,
                           backgroundColor: "#a78bfa",
                         }}
                       />
@@ -1283,20 +1425,47 @@ const SettingsView = ({
                   </>
                 )}
                 <div className="smart-search-status-counts-row">
-                  {locationStatus.total > 0 && (
+                  {locationResourceBusy ? (
+                    <div className="smart-search-status-counts">
+                      {locationResource.downloadedBytes
+                        ? `${formatBytes(locationResource.downloadedBytes)} / ${formatBytes(locationResource.totalBytes)}`
+                        : "Preparing download..."}
+                    </div>
+                  ) : locationStatus.total > 0 ? (
                     <div className="smart-search-status-counts">
                       {locationStatus.done.toLocaleString()} /{" "}
                       {locationStatus.total.toLocaleString()} locations
                     </div>
+                  ) : null}
+                  {locationResourceUnavailable ? (
+                    <button
+                      className="smart-search-status-button"
+                      onClick={downloadLocationResource}
+                      disabled={isRequestingLocationDownload}
+                    >
+                      Download ({locationResource.downloadSizeLabel ?? "541 MB"})
+                    </button>
+                  ) : locationResourceBusy ? (
+                    <button className="smart-search-status-button" disabled>
+                      {locationResourceState === "downloading"
+                        ? `Downloading ${locationResource.progressPercent ?? 0}%`
+                        : "Installing..."}
+                    </button>
+                  ) : (
+                    <button
+                      className="smart-search-status-button"
+                      onClick={toggleLocationPaused}
+                      disabled={isTogglingLocation || locationStatus.pausePending}
+                    >
+                      {locationStatus.paused ? "Resume" : "Pause"}
+                    </button>
                   )}
-                  <button
-                    className="smart-search-status-button"
-                    onClick={toggleLocationPaused}
-                    disabled={isTogglingLocation || locationStatus.pausePending}
-                  >
-                    {locationStatus.paused ? "Resume" : "Pause"}
-                  </button>
                 </div>
+                {locationResource.error && (
+                  <div className="smart-search-status-error">
+                    {locationResource.error}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1317,6 +1486,14 @@ const SettingsView = ({
                   onClick={openDataLocation}
                 >
                   Open data folder
+                </button>
+              </SettingsRow>
+              <SettingsRow>
+                <button
+                  className="settings-normal-button"
+                  onClick={openResourcesLocation}
+                >
+                  Open resources folder
                 </button>
               </SettingsRow>
               <SettingsRow>
@@ -1349,6 +1526,7 @@ const SettingsView = ({
                     appStorageUsed,
                     dbSize,
                     thumbSize,
+                    resourcesSize = 0,
                     tables = {},
                   } = storageUsage;
 
@@ -1390,9 +1568,10 @@ const SettingsView = ({
                       bytes: dbOtherBytes,
                     },
                     { label: "Thumbnails", color: "#fbbf24", bytes: thumbSize },
+                    { label: "Resources", color: "#22c55e", bytes: resourcesSize },
                   ].filter((s) => s.bytes > 0);
 
-                  const total = dbSize + thumbSize || 1;
+                  const total = dbSize + thumbSize + resourcesSize || 1;
 
                   const topItems = [
                     {
@@ -1400,11 +1579,12 @@ const SettingsView = ({
                       label: "App Total",
                       val: appStorageUsed,
                     },
+                    { color: "#fbbf24", label: "Thumbnails", val: thumbSize }, // matches bar segment color
+                    { color: "#22c55e", label: "Resources", val: resourcesSize },
                   ];
 
                   const midItems = [
                     { color: "#afafaf", label: "Database", val: dbSize },
-                    { color: "#fbbf24", label: "Thumbnails", val: thumbSize }, // matches bar segment color
                   ];
 
                   const tableItems = tableDefs.map((d) => ({
@@ -1499,7 +1679,7 @@ const SettingsView = ({
                               {dot(color)}
                               {label}: {val > 0 ? formatBytes(val) : "0 Bytes"}
                               <span style={{ color: "#666", marginLeft: 4 }}>
-                                ({rows.toLocaleString()})
+                                ({rows})
                               </span>
                             </span>
                           ))}

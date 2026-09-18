@@ -22,11 +22,12 @@ const TEXT_EMBED_TIMEOUT_MS  = 15_000;
 const WORKER_RESTART_DELAY   = 5_000;
 
 class EmbeddingService {
-  constructor(db, dataDir, getMainWindow) {
+  constructor(db, dataDir, getMainWindow, modelCacheDir) {
     // We keep references so we can (re)start the worker if it ever crashes.
     this._dbPath        = db.name;          // better-sqlite3 exposes .name = file path
     this._dataDir       = dataDir;
     this._getMainWindow = getMainWindow;
+    this._modelCacheDir = modelCacheDir;
 
     this._worker        = null;
     this._stopped       = false;
@@ -155,17 +156,11 @@ class EmbeddingService {
       }, WORKER_RESTART_DELAY);
     });
 
-    // Determine model cache dir the same way main.js does
-    const { app } = require("electron");
-    const modelCacheDir = app.isPackaged
-      ? path.join(process.resourcesPath, "models")
-      : path.join(__dirname, "models");
-
     this._worker.postMessage({
       type:         "start",
       dbPath:       this._dbPath,
       dataDir:      this._dataDir,
-      modelCacheDir,
+      modelCacheDir: this._modelCacheDir,
     });
 
     // A replacement worker starts unpaused. Reapply a user pause so a worker

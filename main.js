@@ -20,6 +20,7 @@ const heicDecode = require("heic-decode");
 const { Worker } = require("worker_threads");
 const EmbeddingService = require("./embedding-service");
 const LocationService  = require("./location-service");
+const { ResourceManager } = require("./resource-manager");
 const {
   getLocationGeocoderVersion,
   normalizeLocationSelectionMode,
@@ -30,6 +31,7 @@ const AdmZip = require("adm-zip");
 let embeddingService = null;
 let _textPipeline = null;
 let locationService  = null;
+let resourceManager = null;
 
 if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -471,6 +473,25 @@ function initPaths() {
 
   configPath = path.join(dataDir, "config.json");
   dbPath = path.join(dataDir, "orbit-index.db");
+  resourceManager = new ResourceManager({
+    userDataDir: app.getPath("userData"),
+    onStatusChange: publishResourceStatus,
+  });
+}
+
+function publishResourceStatus(status) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("resource-status", status);
+  }
+}
+
+function getResourceStatus(id) {
+  return resourceManager?.getStatus(id) ?? {
+    id,
+    state: "download-required",
+    installed: false,
+    downloadSizeLabel: null,
+  };
 }
 
 function readConfig() {
@@ -650,8 +671,14 @@ function initDatabase() {
 
 function startEmbeddingService() {
   if (embeddingService) return;
+  if (!resourceManager?.isInstalled("smart-search")) return;
   initDatabase();
-  embeddingService = new EmbeddingService(db, dataDir, () => mainWindow);
+  embeddingService = new EmbeddingService(
+    db,
+    dataDir,
+    () => mainWindow,
+    resourceManager.getInstallDirectory("smart-search"),
+  );
   if (readConfig().smartSearchPaused) {
     embeddingService.setInitialPaused(true);
     return;
@@ -661,19 +688,14 @@ function startEmbeddingService() {
 
 function startLocationService() {
   if (locationService) return;
+  if (!resourceManager?.isInstalled("places")) return;
   initDatabase();
-
-  // places.db lives at the project root in dev, or in application resources
-  // in packaged builds.
-  const placesDbPath = app.isPackaged
-    ? path.join(process.resourcesPath, "places.db")
-    : path.join(__dirname, "places.db");
 
   const config = readConfig();
   locationService = new LocationService(
     db,
     dataDir,
-    placesDbPath,
+    resourceManager.getExpectedFilePath("places", "places.db"),
     () => mainWindow,
     normalizeLocationSelectionMode(config.placesSelectionMode),
   );
@@ -869,6 +891,14 @@ ipcMain.handle("open-orbit-location", () => {
 
 ipcMain.handle("open-data-location", () => {
   shell.openPath(dataDir);
+});
+
+ipcMain.handle("open-resources-location", () => {
+  const resourcesDirectory =
+    resourceManager?.resourcesDirectory ??
+    path.join(app.getPath("userData"), "resources");
+  fs.mkdirSync(resourcesDirectory, { recursive: true });
+  shell.openPath(resourcesDirectory);
 });
 
 ipcMain.handle("open-in-default-viewer", async (event, rawPath) => {
@@ -2718,6 +2748,9 @@ ipcMain.handle("get-storage-usage", async () => {
 
     const dbFilePath = path.join(dataDir, "orbit-index.db");
     const thumbsPath = path.join(dataDir, "thumbnails");
+    const resourcesPath =
+      resourceManager?.resourcesDirectory ??
+      path.join(app.getPath("userData"), "resources");
 
     let dbSize = 0;
     if (fs.existsSync(dbFilePath)) {
@@ -2737,6 +2770,7 @@ ipcMain.handle("get-storage-usage", async () => {
     };
 
     const thumbSize = getDirectorySize(thumbsPath);
+    const resourcesSize = getDirectorySize(resourcesPath);
 
     // Per-table row counts + byte estimates via dbstat
     const tableNames = [
@@ -2777,14 +2811,21 @@ ipcMain.handle("get-storage-usage", async () => {
     }
 
     return {
-      appStorageUsed: dbSize + thumbSize,
+      appStorageUsed: dbSize + thumbSize + resourcesSize,
       dbSize,
       thumbSize,
+      resourcesSize,
       tables,
     };
   } catch (error) {
     console.error("Error getting storage usage:", error);
-    return { appStorageUsed: 0, dbSize: 0, thumbSize: 0, tables: {} };
+    return {
+      appStorageUsed: 0,
+      dbSize: 0,
+      thumbSize: 0,
+      resourcesSize: 0,
+      tables: {},
+    };
   }
 });
 
@@ -3981,6 +4022,7 @@ ipcMain.handle("save-drive-letter-map", (event, map) => {
 
 /** Return current embedding progress */
 ipcMain.handle("embedding:get-status", async () => {
+  const resource = getResourceStatus("smart-search");
   if (!embeddingService || !embeddingService._worker) {
     const progress = await getProgressSnapshot("embedding");
     const serviceStatus = embeddingService?.getStatus();
@@ -3988,13 +4030,14 @@ ipcMain.handle("embedding:get-status", async () => {
       modelReady: false,
       initError: serviceStatus?.initError ?? null,
       ...progress,
+      resource,
       paused: serviceStatus?.paused ?? readConfig().smartSearchPaused,
       pausePending: serviceStatus?.pausePending ?? false,
       percentage:
         progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0,
     };
   }
-  return embeddingService.getStatus();
+  return { ...embeddingService.getStatus(), resource };
 });
 
 /** Pause/resume from the renderer (optional — e.g. during active media browsing) */
@@ -4269,6 +4312,7 @@ ipcMain.handle("embedding:has-embedding", async (event, fileId) => {
 
 /** Current progress snapshot */
 ipcMain.handle("location:get-status", async () => {
+  const resource = getResourceStatus("places");
   if (!locationService || !locationService._worker) {
     const progress = await getProgressSnapshot(
       "location",
@@ -4279,13 +4323,32 @@ ipcMain.handle("location:get-status", async () => {
     const serviceStatus = locationService?.getStatus();
     return {
       ...progress,
+      resource,
       paused: serviceStatus?.paused ?? readConfig().locationIndexingPaused,
       pausePending: serviceStatus?.pausePending ?? false,
       percentage:
         progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0,
     };
   }
-  return locationService.getStatus();
+  return { ...locationService.getStatus(), resource };
+});
+
+ipcMain.handle("resource:download", async (_event, requestedId) => {
+  const resourceId =
+    typeof requestedId === "string" ? requestedId : requestedId?.id;
+
+  try {
+    const status = await resourceManager.download(resourceId);
+    if (resourceId === "smart-search") startEmbeddingService();
+    if (resourceId === "places") startLocationService();
+    return { ok: true, status };
+  } catch (error) {
+    return {
+      ok: false,
+      status: getResourceStatus(resourceId),
+      error: error.message || "Resource download failed.",
+    };
+  }
 });
 
 ipcMain.handle("location:pause", () => {

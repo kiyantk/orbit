@@ -1,5 +1,5 @@
 /**
- * Resolves GPS coordinates against the bundled locality polygons in places.db.
+ * Resolves GPS coordinates against the downloaded offline locality polygons in places.db.
  * It runs in a Worker thread so SQLite lookup and index writes never block the
  * Electron main process.
  */

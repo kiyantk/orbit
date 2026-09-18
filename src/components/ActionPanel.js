@@ -125,9 +125,18 @@ const SmartSearchInput = ({
 
   const embeddingsComplete = status.total > 0 && status.done >= status.total;
   const embeddingsReady = status.modelReady && status.done > 0;
+  const resourceState = status.resource?.state;
 
   let placeholder;
-  if (!status.modelReady && !status.initError) {
+  if (resourceState === "download-required") {
+    placeholder = "Smart Search download required - install it in Settings";
+  } else if (resourceState === "downloading") {
+    placeholder = `Downloading Smart Search resource (${status.resource.progressPercent ?? 0}%)`;
+  } else if (resourceState === "extracting") {
+    placeholder = "Installing Smart Search resource...";
+  } else if (resourceState === "download-failed") {
+    placeholder = "Smart Search download failed - retry it in Settings";
+  } else if (!status.modelReady && !status.initError) {
     placeholder = "Loading CLIP model…";
   } else if (status.initError) {
     placeholder = "Model unavailable — check logs";
@@ -426,6 +435,11 @@ const ActionPanel = ({
     done: 0,
     percentage: 0,
     initError: null,
+    resource: {
+      id: "smart-search",
+      state: "download-required",
+      downloadSizeLabel: "107 MB",
+    },
   });
   const [smartThreshold, setSmartThreshold] = useState(0.2);
   const [smartTopK, setSmartTopK] = useState(200);
@@ -532,7 +546,12 @@ const ActionPanel = ({
 
   useEffect(() => {
     const handler = (data) => {
-      if (data) setSmartSearchStatus(data);
+      if (data) {
+        setSmartSearchStatus((current) => ({
+          ...data,
+          resource: data.resource ?? current.resource,
+        }));
+      }
     };
     return window.electron.ipcRenderer.on("embedding-progress", handler);
   }, []);
