@@ -1,6 +1,6 @@
 const Database = require("better-sqlite3");
 
-const SCALE = 1_000_000;
+const SCALE = 100_000;
 const GRID_SIZE = 0.10;
 
 const GRID_COLUMNS = Math.round(360 / GRID_SIZE);
