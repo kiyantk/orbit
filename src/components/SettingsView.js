@@ -898,6 +898,18 @@ const SettingsView = ({
     runTool("detect-screenshots", "Re-detecting capture types");
   const cleanupThumbnails = () =>
     runTool("cleanup-thumbnails", "Scanning for orphaned thumbnails");
+  const cleanupOrphanedIndexData = () => {
+    setShowToolsPopup(false);
+    setConfirmPopup({
+      message: "Clean up indexing data?",
+      subMessage:
+        "This removes Smart Search, Places, and Text Recognition data for files that are no longer indexed.",
+      onConfirm: () => {
+        setConfirmPopup(null);
+        runTool("cleanup-orphaned-index-data", "Cleaning up indexing data");
+      },
+    });
+  };
 
   const getUsageData = async () => {
     setIsFetchingUsage(true);
@@ -1478,21 +1490,19 @@ const SettingsView = ({
                 <button
                   className="welcome-popup-select-folders-btn"
                   onClick={() => setShowToolsPopup(true)}
-                  disabled={
-                    isIndexing || (settings && !settings.indexedFolders.length)
-                  }
+                  disabled={isIndexing}
                 >
                   Tools
                 </button>
               </div>
               {indexingStatus && (
-                <div className="welcome-popup-status">
+                <div className="welcome-popup-status indexing-status">
                   <span>{indexingStatus}</span>
                   <br />
                   <span>Don't close the app</span>
                 </div>
               )}
-              <h3 style={{ marginTop: 18 }}>Smart Search</h3>
+              <h3 style={{ marginTop: 18, paddingTop: 12, borderTop: "1px solid #3f3f3f" }}>Smart Search</h3>
               {/* ── Smart Search Status ── */}
               <div style={{ marginTop: 10 }}>
                 <SmartSearchStatus />
@@ -1988,6 +1998,10 @@ const SettingsView = ({
                   setShowToolsPopup(false);
                   cleanupThumbnails();
                 },
+              },
+              {
+                label: "Clean Up Indexing Data",
+                action: cleanupOrphanedIndexData,
               },
               {
                 label: "Generate HEIC Thumbnails",

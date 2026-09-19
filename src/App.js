@@ -15,6 +15,21 @@ import ShuffleView from "./components/ShuffleView";
 import MemoriesView from "./components/MemoriesView";
 import PlacesView from "./components/PlacesView";
 
+function hasActiveExplorerConstraint(activeFilters) {
+  return Object.entries(activeFilters || {}).some(([key, value]) => {
+    if (key === "searchBy" || key === "sortBy" || key === "sortOrder") {
+      return false;
+    }
+
+    if (key === "searchTerm") {
+      return Boolean(String(value || "").trim());
+    }
+
+    if (Array.isArray(value)) return value.length > 0;
+    return value !== null && value !== undefined && value !== "" && value !== false;
+  });
+}
+
 const App = () => {
   const [settings, setSettings] = useState(null);
   const [showWelcomePopup, setShowWelcomePopup] = useState(false);
@@ -62,6 +77,15 @@ const App = () => {
       actionPanelType === "search" ||
       data._similarTo
     ) {
+      const isEmptySearch =
+        actionPanelType === "search" &&
+        !String(data.searchTerm || "").trim();
+
+      // Changing between search types with no query should leave the already
+      // complete grid untouched. An empty query still clears an active search
+      // or filter result set.
+      if (isEmptySearch && !hasActiveExplorerConstraint(filters)) return;
+
       if (data.searchBy === "smart") {
         if (data.smartIds?.length > 0) {
           setFilters({

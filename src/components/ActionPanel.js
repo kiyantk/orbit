@@ -29,6 +29,18 @@ const DEFAULT_SHUFFLE_SETTINGS = {
   smoothTransition: false,
 };
 
+function hasActiveExplorerConstraint(filters) {
+  return Object.entries(filters || {}).some(([key, value]) => {
+    if (key === "searchBy" || key === "sortBy" || key === "sortOrder") {
+      return false;
+    }
+
+    if (key === "searchTerm") return Boolean(String(value || "").trim());
+    if (Array.isArray(value)) return value.length > 0;
+    return value !== null && value !== undefined && value !== "" && value !== false;
+  });
+}
+
 // ─── Generic filter hook ───────────────────────────────────────────────────────
 
 function useFilterState(initial = EMPTY_FILTERS) {
@@ -683,9 +695,22 @@ const ActionPanel = ({
   };
 
   const resetExploreAll = () => {
+    const filterPanelIsAlreadyClear = !hasActiveExplorerConstraint(
+      explore.filters,
+    );
+    const appliedResultsAreFiltered = hasActiveExplorerConstraint(
+      activeFilters,
+    );
+
     explore.resetFilters();
     resetSort();
     resetSearch();
+
+    // No filter-state change means the auto-apply effect will not run. Still
+    // clear a previously applied search so the visible grid and panel agree.
+    if (filterPanelIsAlreadyClear && appliedResultsAreFiltered) {
+      onApply(EMPTY_FILTERS);
+    }
   };
 
   // ── Smart Search ──────────────────────────────────────────────────────────

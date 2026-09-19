@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Grid } from "react-virtualized";
+import { faMagnifyingGlass } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import "react-virtualized/styles.css";
 
 // ─── ISO 3166-2 region data loader ────────────────────────────────────────────
@@ -112,6 +114,25 @@ function formatCountSubtitle(item, mode) {
   }
 }
 
+function normalizeSearchText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase();
+}
+
+function matchesPlaceSearch(item, query) {
+  if (!query) return true;
+
+  return [
+    item.label,
+    item.subtitle,
+    item.country,
+    item.subdivision,
+    item.city,
+  ].some((value) => normalizeSearchText(value).includes(query));
+}
+
 // Location records can differ internally while resolving to the same visible
 // place. In chronological mode, coalesce only adjacent cards with the same
 // display identity so a return after another visible place remains separate.
@@ -215,6 +236,7 @@ const TABS = ["Countries", "Regions", "Cities"];
 
 const PlacesView = ({ currentSettings, onViewPlace }) => {
   const [selectedTab, setSelectedTab] = useState("Countries");
+  const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
   const [iso3166, setIso3166] = useState(null);
@@ -391,13 +413,18 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
     [onViewPlace],
   );
 
+  const filteredItems = useMemo(() => {
+    const query = normalizeSearchText(searchQuery.trim());
+    return items.filter((item) => matchesPlaceSearch(item, query));
+  }, [items, searchQuery]);
+
   const makeCellRenderer = useCallback(
     (columnCount, cellWidth) =>
       ({ columnIndex, rowIndex, key, style }) => {
         const index = rowIndex * columnCount + columnIndex;
-        if (index >= items.length) return null;
+        if (index >= filteredItems.length) return null;
 
-        const item = items[index];
+        const item = filteredItems[index];
 
         const adjustedStyle = {
           ...style,
@@ -422,18 +449,28 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
           />
         );
       },
-    [items, handleCardClick],
+    [filteredItems, handleCardClick, placesSubtitles],
   );
 
   // ─── Render ───────────────────────────────────────────────────────────────
   const columnCount = getColumnCount(size.width || 0);
   const cellWidth = getCellWidth(size.width || 0, columnCount);
-  const rowCount = Math.ceil(items.length / columnCount);
+  const rowCount = Math.ceil(filteredItems.length / columnCount);
 
   return (
     <div className="places-view">
       <div className="memories-main">
         <div className="settings-list">
+          <div className="places-search">
+            <FontAwesomeIcon icon={faMagnifyingGlass} aria-hidden="true" />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder={`Search ${selectedTab.toLowerCase()}...`}
+              aria-label={`Search ${selectedTab.toLowerCase()}`}
+            />
+          </div>
           <ul>
             {TABS.map((tab) => (
               <li
@@ -456,13 +493,17 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
             </div>
           )}
 
-          {!loading && items.length === 0 && (
+          {!loading && filteredItems.length === 0 && (
             <div className="memories-empty">
-              <p>No {selectedTab.toLowerCase()} with location data found.</p>
+              <p>
+                {searchQuery.trim()
+                  ? `No ${selectedTab.toLowerCase()} match your search.`
+                  : `No ${selectedTab.toLowerCase()} with location data found.`}
+              </p>
             </div>
           )}
 
-          {!loading && items.length > 0 && size.width > 0 && (
+          {!loading && filteredItems.length > 0 && size.width > 0 && (
             <Grid
               width={size.width}
               height={size.height}

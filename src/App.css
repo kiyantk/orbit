@@ -1032,7 +1032,6 @@ select:disabled {
   border-radius: 4px;
   font-size: 14px;
   cursor: pointer;
-  margin-bottom: 10px;
   user-select: none;
   border: 1px solid #4f4b52;
   border-radius: 2px;
@@ -2506,6 +2505,37 @@ input[type="checkbox"] {
   padding-right: 12px;
 }
 
+.places-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px;
+  padding: 0 10px;
+  height: 34px;
+  border: 1px solid #484050;
+  border-radius: 6px;
+  color: #a49baa;
+  background: #1a1822;
+}
+
+.places-search:focus-within {
+  border-color: #554763;
+}
+
+.places-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+
+.places-search input::placeholder {
+  color: #81778b;
+}
+
 /* ── Grid ────────────────────────────────────────────────────────────────── */
 .places-grid {
   display: grid;
@@ -2934,4 +2964,8 @@ input[type="checkbox"] {
   background: rgb(32 29 39 / 92%);
   height: 40vh;
   overflow-y: auto;
+}
+
+.indexing-status {
+  margin-top: 12px !important;
 }

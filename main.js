@@ -3986,6 +3986,52 @@ ipcMain.handle("cleanup-thumbnails", async () => {
   }
 });
 
+// Remove derived records that outlived their source rows.  These tables do not
+// use foreign keys because the indexing workers access the database
+// independently, so this is kept as an explicit maintenance action.
+ipcMain.handle("cleanup-orphaned-index-data", async () => {
+  try {
+    initDatabase();
+
+    const tableExists = (tableName) =>
+      !!db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
+        .get(tableName);
+    const cleanupTable = (tableName) => {
+      if (!tableExists(tableName)) return 0;
+      return db
+        .prepare(
+          `DELETE FROM ${tableName}
+           WHERE NOT EXISTS (
+             SELECT 1 FROM files WHERE files.id = ${tableName}.file_id
+           )`,
+        )
+        .run().changes;
+    };
+
+    const removed = db.transaction(() => ({
+      embeddings: cleanupTable("embeddings"),
+      locations: cleanupTable("locations"),
+      ocr: cleanupTable(OCR_INDEX_TABLE),
+    }))();
+    const total = removed.embeddings + removed.locations + removed.ocr;
+
+    invalidateProgressSnapshots();
+    return {
+      success: true,
+      removed,
+      message: total
+        ? `Removed ${total} stale indexing record(s): Smart Search ${removed.embeddings}, Places ${removed.locations}, Text Recognition ${removed.ocr}.`
+        : "No stale Smart Search, Places, or Text Recognition records found.",
+    };
+  } catch (err) {
+    console.error("cleanup-orphaned-index-data error:", err);
+    return { success: false, error: err.message };
+  }
+});
+
 // Overwrite a tag's media_ids entirely (enables removing items)
 ipcMain.handle("tag:set-items", async (event, { tagId, mediaIds }) => {
   try {
