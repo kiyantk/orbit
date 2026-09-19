@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faPlay,
@@ -90,6 +90,47 @@ function safePlay(video) {
         console.error(err);
     });
   }
+}
+
+function textSearchTerms(value) {
+  return String(value ?? "").normalize("NFKC").toLocaleLowerCase()
+    .match(/[\p{L}\p{N}_]+/gu) ?? [];
+}
+
+function differsByAtMostOneCharacter(left, right) {
+  if (Math.abs(left.length - right.length) > 1) return false;
+  let leftIndex = 0;
+  let rightIndex = 0;
+  let differences = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    if (left[leftIndex] === right[rightIndex]) {
+      leftIndex += 1;
+      rightIndex += 1;
+    } else if (++differences > 1) {
+      return false;
+    } else if (left.length > right.length) {
+      leftIndex += 1;
+    } else if (right.length > left.length) {
+      rightIndex += 1;
+    } else {
+      leftIndex += 1;
+      rightIndex += 1;
+    }
+  }
+  return true;
+}
+
+function boxMatchesTextQuery(detectedText, query) {
+  const queryText = String(query ?? "").normalize("NFKC").trim().toLocaleLowerCase();
+  const normalizedBoxText = String(detectedText ?? "").normalize("NFKC").trim().toLocaleLowerCase();
+  if (!queryText || !normalizedBoxText) return false;
+  if (normalizedBoxText.includes(queryText)) return true;
+  const queryTerms = textSearchTerms(queryText);
+  const boxTerms = textSearchTerms(normalizedBoxText);
+  return queryTerms.some((queryTerm) => boxTerms.some((boxTerm) =>
+    boxTerm.startsWith(queryTerm) ||
+    (queryTerm.length >= 4 && differsByAtMostOneCharacter(queryTerm, boxTerm)),
+  ));
 }
 
 // ─── Metadata row ─────────────────────────────────────────────────────────────
@@ -185,6 +226,8 @@ export default function PreviewPanel({
   panelKey,
   selectedItemAvailable,
   smartScore,
+  textMatch,
+  textSearchTerm,
 }) {
   const videoRefNormal = useRef(null);
   const trackRefNormal = useRef(null);
@@ -192,7 +235,9 @@ export default function PreviewPanel({
   const trackRefFullscreen = useRef(null);
   const wasNormalPlayingRef = useRef(false);
   const imgRef = useRef(null);
+  const fullscreenImageContainerRef = useRef(null);
   const lastMousePos = useRef(null);
+  const ocrMaskId = useRef(`ocr-focus-mask-${Math.random().toString(36).slice(2)}`).current;
   const previousMediaId = useRef(null);
   const previousPlaceNameDisplay = useRef(
     currentSettings?.placesNameDisplay ?? "english",
@@ -213,6 +258,9 @@ export default function PreviewPanel({
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [tags, setTags] = useState([]);
+  const [ocrBoxes, setOcrBoxes] = useState([]);
+  const [ocrFocusFlash, setOcrFocusFlash] = useState(false);
+  const [ocrOverlayLayout, setOcrOverlayLayout] = useState(null);
 
   const currentVideoRef = isFullscreen ? videoRefFullscreen : videoRefNormal;
   const currentTrackRef = isFullscreen ? trackRefFullscreen : trackRefNormal;
@@ -246,6 +294,32 @@ export default function PreviewPanel({
       : "";
   const isMetadataVisible = (field) =>
     isPreviewMetadataFieldVisible(currentSettings, field);
+  const updateOcrOverlayLayout = useCallback(() => {
+    const image = imgRef.current;
+    const container = fullscreenImageContainerRef.current;
+    if (!image || !container || !image.offsetWidth || !image.offsetHeight) {
+      setOcrOverlayLayout((previous) => previous ? null : previous);
+      return;
+    }
+    const nextLayout = {
+      left: image.offsetLeft,
+      top: image.offsetTop,
+      width: image.offsetWidth,
+      height: image.offsetHeight,
+    };
+    setOcrOverlayLayout((previous) =>
+      previous && Object.keys(nextLayout).every((key) => previous[key] === nextLayout[key])
+        ? previous
+        : nextLayout,
+    );
+  }, []);
+  const matchingOcrBoxes = useMemo(
+    () => ocrBoxes.filter((box) => boxMatchesTextQuery(box.text, textSearchTerm)),
+    [ocrBoxes, textSearchTerm],
+  );
+  const ocrFocusKey = matchingOcrBoxes.map((box) =>
+    `${box.text}:${box.points.flat().join(",")}`,
+  ).join("|");
 
   // ── Video sync ─────────────────────────────────────────────────────────────
 
@@ -369,6 +443,55 @@ export default function PreviewPanel({
       )
       .catch((err) => console.error("Failed to fetch tags:", err));
   }, [item, panelKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!item?.id || !textSearchTerm || isVideo) {
+      setOcrBoxes([]);
+      return undefined;
+    }
+    window.electron.ipcRenderer
+      .invoke("ocr:get-for-files", [item.id])
+      .then((result) => {
+        if (cancelled) return;
+        const row = result?.success ? result.rows?.[0] : null;
+        setOcrBoxes(Array.isArray(row?.boxes) ? row.boxes : []);
+      })
+      .catch(() => {
+        if (!cancelled) setOcrBoxes([]);
+      });
+    return () => { cancelled = true; };
+  }, [item?.id, textSearchTerm, isVideo]);
+
+  useEffect(() => {
+    if (!isFullscreen || isVideo || isFullscreenMediaLoading || !ocrFocusKey) {
+      setOcrFocusFlash(false);
+      return undefined;
+    }
+    setOcrFocusFlash(true);
+    const timer = setTimeout(() => setOcrFocusFlash(false), 1_100);
+    return () => clearTimeout(timer);
+  }, [isFullscreen, isVideo, isFullscreenMediaLoading, ocrFocusKey]);
+
+  useEffect(() => {
+    if (
+      !isFullscreen ||
+      isVideo ||
+      isFullscreenMediaLoading ||
+      !ocrFocusKey
+    ) return undefined;
+    updateOcrOverlayLayout();
+    let frame = null;
+    const handleResize = () => {
+      if (frame != null) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(updateOcrOverlayLayout);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => {
+      if (frame != null) cancelAnimationFrame(frame);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [isFullscreen, isVideo, isFullscreenMediaLoading, ocrFocusKey, updateOcrOverlayLayout]);
 
   // ── Keyboard ───────────────────────────────────────────────────────────────
 
@@ -801,6 +924,13 @@ export default function PreviewPanel({
             title={`Raw CLIP cosine similarity: ${smartScore.toFixed(4)}`}
           />
         )}
+        {isMetadataVisible("similarity") && textMatch && (
+          <MetaRow
+            label="Text match"
+            value={textMatch}
+            title="Matched against text detected in this image"
+          />
+        )}
         <MetaRow
           label="ID"
           value={item.id ? item.media_id : null}
@@ -870,6 +1000,7 @@ export default function PreviewPanel({
               </div>
             ) : (
               <div
+                ref={fullscreenImageContainerRef}
                 className="fullscreen-image-container"
                 onClick={(e) => {
                   if (e.target === e.currentTarget) closeFullscreen();
@@ -895,11 +1026,19 @@ export default function PreviewPanel({
                   style={{
                     transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
                     cursor: zoom > 1 ? "grab" : "auto",
-                    transition: lastMousePos.current
+                    // A transformed image plus a full-size masked SVG forces
+                    // Chromium to animate two large surfaces. Keep OCR focus
+                    // responsive by applying its zoom/pan without animation.
+                    transition: matchingOcrBoxes.length > 0
+                      ? "none"
+                      : lastMousePos.current
                       ? "none"
                       : "transform 0.1s ease-out",
                   }}
-                  onLoad={() => setIsFullscreenMediaLoading(false)}
+                  onLoad={() => {
+                    setIsFullscreenMediaLoading(false);
+                    requestAnimationFrame(updateOcrOverlayLayout);
+                  }}
                   onWheel={handleWheel}
                   onMouseDown={zoom > 1 ? handleMouseDown : undefined}
                   onDoubleClick={() => {
@@ -909,6 +1048,49 @@ export default function PreviewPanel({
                   onError={handleMediaError}
                   data-visualfilter={currentSettings?.mediaFilter ?? "none"}
                 />
+                {!isFullscreenMediaLoading && ocrOverlayLayout && matchingOcrBoxes.length > 0 && (
+                  <svg
+                    className={`ocr-focus-overlay ${ocrFocusFlash ? "ocr-focus-flash" : ""}`}
+                    viewBox="0 0 1 1"
+                    preserveAspectRatio="none"
+                    aria-hidden="true"
+                    style={{
+                      // This is mathematically the same center-origin scale
+                      // and translation as the image, but avoids an expensive
+                      // transform animation on the masked SVG layer.
+                      left: `${ocrOverlayLayout.left + offset.x + ((1 - zoom) * ocrOverlayLayout.width) / 2}px`,
+                      top: `${ocrOverlayLayout.top + offset.y + ((1 - zoom) * ocrOverlayLayout.height) / 2}px`,
+                      width: `${ocrOverlayLayout.width * zoom}px`,
+                      height: `${ocrOverlayLayout.height * zoom}px`,
+                    }}
+                  >
+                    <defs>
+                      <mask id={ocrMaskId} maskUnits="userSpaceOnUse" x="0" y="0" width="1" height="1">
+                        <rect width="1" height="1" fill="white" />
+                        {matchingOcrBoxes.map((box, index) => (
+                          <polygon
+                            key={`mask-${index}`}
+                            points={box.points.map((point) => point.join(",")).join(" ")}
+                            fill="black"
+                          />
+                        ))}
+                      </mask>
+                    </defs>
+                    <rect
+                      className="ocr-focus-dim"
+                      width="1"
+                      height="1"
+                      mask={`url(#${ocrMaskId})`}
+                    />
+                    {matchingOcrBoxes.map((box, index) => (
+                      <polygon
+                        className="ocr-focus-box"
+                        key={`box-${index}`}
+                        points={box.points.map((point) => point.join(",")).join(" ")}
+                      />
+                    ))}
+                  </svg>
+                )}
               </div>
             )}
           </div>

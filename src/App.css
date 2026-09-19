@@ -656,9 +656,36 @@ select:disabled {
 .fullscreen-image-container {
   width: 100%;
   height: 100%;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.ocr-focus-overlay {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  overflow: visible;
+  transform-origin: center;
+}
+
+.ocr-focus-dim {
+  fill: rgba(0, 0, 0, 0.72);
+  opacity: 0;
+  transition: opacity 750ms ease-out;
+}
+
+.ocr-focus-flash .ocr-focus-dim {
+  opacity: 1;
+}
+
+.ocr-focus-box {
+  fill: rgba(255, 220, 0, 0.16);
+  stroke: #ffdc00;
+  stroke-width: 3px;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
 }
 
 /* Only the temporary fullscreen thumbnail fills the available preview area. */

@@ -20,17 +20,20 @@ const heicDecode = require("heic-decode");
 const { Worker } = require("worker_threads");
 const EmbeddingService = require("./embedding-service");
 const LocationService  = require("./location-service");
+const OcrService = require("./ocr-service");
 const { ResourceManager } = require("./resource-manager");
 const {
   getLocationGeocoderVersion,
   normalizeLocationSelectionMode,
 } = require("./location-schema");
+const { OCR_FTS_TABLE, OCR_INDEX_TABLE } = require("./ocr-schema");
 const crypto = require("crypto");
 const { parse } = require("csv-parse/sync");
 const AdmZip = require("adm-zip");
 let embeddingService = null;
 let _textPipeline = null;
 let locationService  = null;
+let ocrService = null;
 let resourceManager = null;
 
 if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
@@ -132,6 +135,7 @@ app.whenReady().then(() => {
   
     setTimeout(startEmbeddingService, 3000);
     setTimeout(startLocationService,  5000);
+    setTimeout(startOcrService,       7000);
   });
 
   // mainWindow.once("ready-to-show", () => {
@@ -461,6 +465,7 @@ const defaultConfig = {
   excludeScreenCapturesFromMilestones: false,
   smartSearchPaused: false,
   locationIndexingPaused: false,
+  ocrIndexingPaused: false,
   driveLetterMap: {},
   hiddenFolders: [],
 };
@@ -705,6 +710,22 @@ function startLocationService() {
     return;
   }
   locationService.start();
+}
+
+function startOcrService() {
+  if (ocrService) return;
+  if (!resourceManager?.isInstalled("ocr")) return;
+  initDatabase();
+  ocrService = new OcrService(
+    db,
+    () => mainWindow,
+    resourceManager.getInstallDirectory("ocr"),
+  );
+  if (readConfig().ocrIndexingPaused) {
+    ocrService.setInitialPaused(true);
+    return;
+  }
+  ocrService.start();
 }
 
 ipcMain.handle("read-file", async (_event, relativePath) => {
@@ -1083,9 +1104,9 @@ ipcMain.handle(
       } else if (
         Array.isArray(filters.ids) &&
         filters.ids.length > 0 &&
-        filters._smartSearch
+        (filters._smartSearch || filters._textSearch)
       ) {
-        // Smart search: preserve similarity rank order supplied by the caller.
+        // Relevance search: preserve rank order supplied by the caller.
         // temp_ids.rank was populated in the same order as filters.ids.
         orderSQL = `ORDER BY (SELECT rank FROM temp_ids WHERE temp_ids.id = files.id) ASC`;
       } else {
@@ -2586,6 +2607,11 @@ ipcMain.handle("remove-folder-data", async (event, folderPath) => {
     }
 
     db.transaction(() => {
+      // OCR is derived data. Keep its FTS triggers in sync before removing
+      // the source file rows (older databases may not have the table yet).
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ocr_index'").get()) {
+        db.prepare("DELETE FROM ocr_index WHERE file_id IN (SELECT id FROM files WHERE folder_path = ?)").run(folderPath);
+      }
       // Delete files from DB
       db.prepare("DELETE FROM files WHERE folder_path = ?").run(folderPath);
 
@@ -2658,6 +2684,10 @@ ipcMain.handle("remove-item-from-index", async (event, ids) => {
           db.prepare(
             "INSERT OR IGNORE INTO removed_files (path, folder_path) VALUES (?, ?)",
           ).run(removed.path, removed.folder_path);
+        }
+
+        if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ocr_index'").get()) {
+          db.prepare("DELETE FROM ocr_index WHERE file_id = ?").run(id);
         }
 
         // 2. Remove item from DB
@@ -4334,6 +4364,201 @@ ipcMain.handle("location:get-status", async () => {
   return { ...locationService.getStatus(), resource };
 });
 
+ipcMain.handle("ocr:get-status", async () => {
+  const resource = getResourceStatus("ocr");
+  if (!ocrService || !ocrService._worker) {
+    const progress = await getProgressSnapshot("ocr");
+    const serviceStatus = ocrService?.getStatus();
+    return {
+      modelReady: false,
+      initError: serviceStatus?.initError ?? null,
+      ...progress,
+      resource,
+      paused: serviceStatus?.paused ?? readConfig().ocrIndexingPaused,
+      pausePending: serviceStatus?.pausePending ?? false,
+      percentage: progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0,
+    };
+  }
+  return { ...ocrService.getStatus(), resource };
+});
+
+ipcMain.handle("ocr:pause", () => {
+  ocrService?.pause();
+  try {
+    saveConfigPatch({ ocrIndexingPaused: true });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("ocr:resume", () => {
+  try {
+    saveConfigPatch({ ocrIndexingPaused: false });
+    if (!ocrService) startOcrService();
+    else {
+      ocrService.resume();
+      ocrService.start();
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+function makeFtsQuery(query) {
+  return String(query ?? "")
+    .normalize("NFKC")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((term) => term.replace(/[^\p{L}\p{N}_]/gu, ""))
+    .filter(Boolean)
+    // Prefix matching finds longer OCR words; OR avoids requiring every term.
+    .map((term) => `"${term}"*`)
+    .join(" OR ");
+}
+
+function textSearchTerms(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .match(/[\p{L}\p{N}_]+/gu) ?? [];
+}
+
+// True for one substitution, insertion, or deletion. Keeping this bounded
+// prevents OCR search from becoming a broad fuzzy search.
+function differsByAtMostOneCharacter(a, b) {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  if (a.length < b.length) [a, b] = [b, a];
+  let left = 0;
+  while (left < b.length && a[left] === b[left]) left += 1;
+  if (a.length === b.length) {
+    return a.slice(left + 1) === b.slice(left + 1);
+  }
+  return a.slice(left + 1) === b.slice(left);
+}
+
+function findOneCharacterTypoMatches(queryTerms, limit) {
+  const typoTerms = [...new Set(queryTerms.filter((term) => term.length >= 4))];
+  if (!typoTerms.length) return [];
+  // Use anchors from multiple parts of the query. A first-character OCR typo
+  // should not prevent the candidate from reaching the exact one-edit check.
+  const anchors = [...new Set(typoTerms.flatMap((term) => [
+    term.slice(0, 3),
+    term.slice(Math.max(0, Math.floor(term.length / 2) - 1), Math.floor(term.length / 2) + 2),
+    term.slice(-3),
+  ]).filter((anchor) => anchor.length >= 3))];
+  const where = anchors.map(() => "lower(text) LIKE ?").join(" OR ");
+  const candidates = db.prepare(
+    "SELECT file_id, text FROM " + OCR_INDEX_TABLE +
+    " WHERE COALESCE(mean_confidence, 0) > 0 AND (" + where + ") LIMIT 1000",
+  ).all(...anchors.map((anchor) => "%" + anchor + "%"));
+  const matches = [];
+  for (const candidate of candidates) {
+    const words = textSearchTerms(candidate.text);
+    if (typoTerms.some((term) => words.some((word) => differsByAtMostOneCharacter(term, word)))) {
+      matches.push(candidate.file_id);
+      if (matches.length >= limit) break;
+    }
+  }
+  return matches;
+}
+
+ipcMain.handle("ocr:search", async (_event, { query, topK = 200 } = {}) => {
+  try {
+    initDatabase();
+    const ftsQuery = makeFtsQuery(query);
+    if (!ftsQuery) return { success: true, results: [], matches: {} };
+    const ftsAvailable = db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+    ).get(OCR_FTS_TABLE);
+    if (!ftsAvailable) return { success: true, results: [], matches: {} };
+    const limit = Math.max(1, Math.min(5_000, Number(topK) || 200));
+    const normalizedQuery = String(query ?? "").normalize("NFKC").trim();
+    const searchSql =
+      "SELECT file_id, MIN(score) AS score FROM (" +
+      "SELECT " + OCR_FTS_TABLE + ".rowid AS file_id, bm25(" + OCR_FTS_TABLE + ") AS score " +
+      "FROM " + OCR_FTS_TABLE + " JOIN " + OCR_INDEX_TABLE + " fts_index" +
+      " ON fts_index.file_id = " + OCR_FTS_TABLE + ".rowid" +
+      " WHERE " + OCR_FTS_TABLE + " MATCH ? AND COALESCE(fts_index.mean_confidence, 0) > 0 " +
+      "UNION ALL SELECT file_id, 0 AS score FROM " + OCR_INDEX_TABLE +
+      " WHERE COALESCE(mean_confidence, 0) > 0 AND instr(lower(text), lower(?)) > 0 " +
+      ") GROUP BY file_id ORDER BY score ASC, file_id ASC LIMIT ?";
+    const rows = db.prepare(searchSql).all(
+      ftsQuery, normalizedQuery, limit,
+    );
+    const existingIds = new Set(rows.map((row) => row.file_id));
+    const typoIds = findOneCharacterTypoMatches(textSearchTerms(normalizedQuery), limit)
+      .filter((fileId) => !existingIds.has(fileId));
+    const results = [
+      ...rows.map((row) => row.file_id),
+      ...typoIds,
+    ].slice(0, limit);
+    return {
+      success: true,
+      results,
+      matches: Object.fromEntries([
+        ...rows.map((row) => [row.file_id, row.score < 0 ? "Text match" : "Contains query"]),
+        ...typoIds.map((fileId) => [fileId, "1-character typo match"]),
+      ]),
+    };
+  } catch (error) {
+    console.error("ocr:search error:", error);
+    return { success: false, error: error.message, results: [], matches: {} };
+  }
+});
+
+function decodeOcrBoxes(blob) {
+  if (!blob?.byteLength) return [];
+  const values = new Uint16Array(blob.buffer, blob.byteOffset, Math.floor(blob.byteLength / 2));
+  const boxes = [];
+  for (let offset = 0; offset + 7 < values.length; offset += 8) {
+    boxes.push([
+      [values[offset] / 65535, values[offset + 1] / 65535],
+      [values[offset + 2] / 65535, values[offset + 3] / 65535],
+      [values[offset + 4] / 65535, values[offset + 5] / 65535],
+      [values[offset + 6] / 65535, values[offset + 7] / 65535],
+    ]);
+  }
+  return boxes;
+}
+
+// The UI does not render OCR overlays yet, but expose the compact, normalized
+// quadrilaterals now so PreviewPanel can add them without a schema migration.
+ipcMain.handle("ocr:get-for-files", async (_event, fileIds) => {
+  try {
+    initDatabase();
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(OCR_INDEX_TABLE)) {
+      return { success: true, rows: [] };
+    }
+    const ids = Array.isArray(fileIds) ? fileIds.filter(Number.isInteger) : [];
+    if (!ids.length) return { success: true, rows: [] };
+    const rows = [];
+    for (let index = 0; index < ids.length; index += 999) {
+      const chunk = ids.slice(index, index + 999);
+      const sql = "SELECT file_id, text, boxes, box_count, mean_confidence FROM " +
+        OCR_INDEX_TABLE + " WHERE file_id IN (" + chunk.map(() => "?").join(",") + ")";
+      rows.push(...db.prepare(sql).all(...chunk).map((row) => {
+        // OCR text is stored in detection order, one line per retained box.
+        // Return that pairing so the preview can highlight the matching region.
+        const boxTexts = String(row.text ?? "").split("\n");
+        return {
+          ...row,
+          boxes: decodeOcrBoxes(row.boxes).map((points, index) => ({
+            points,
+            text: boxTexts[index] ?? "",
+          })),
+        };
+      }));
+    }
+    return { success: true, rows };
+  } catch (error) {
+    return { success: false, error: error.message, rows: [] };
+  }
+});
+
 ipcMain.handle("resource:download", async (_event, requestedId) => {
   const resourceId =
     typeof requestedId === "string" ? requestedId : requestedId?.id;
@@ -4342,6 +4567,7 @@ ipcMain.handle("resource:download", async (_event, requestedId) => {
     const status = await resourceManager.download(resourceId);
     if (resourceId === "smart-search") startEmbeddingService();
     if (resourceId === "places") startLocationService();
+    if (resourceId === "ocr") startOcrService();
     return { ok: true, status };
   } catch (error) {
     return {
@@ -5220,4 +5446,5 @@ app.on("before-quit", async () => {
   await exiftool.end();
   embeddingService?.stop();
   locationService?.stop();
+  ocrService?.stop();
 });

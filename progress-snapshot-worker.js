@@ -9,6 +9,7 @@ const {
   LOCATION_METADATA_TABLE,
   getLocationGeocoderVersion,
 } = require("./location-schema");
+const { OCR_INDEX_TABLE, OCR_PIPELINE_VERSION } = require("./ocr-schema");
 
 let db;
 
@@ -24,7 +25,7 @@ try {
   db = new Database(workerData.dbPath, { readonly: true, fileMustExist: true });
 
   const total =
-    workerData.type === "embedding"
+    workerData.type === "embedding" || workerData.type === "ocr"
       ? (db
           .prepare("SELECT COUNT(*) AS c FROM files WHERE file_type = 'image'")
           .get()?.c ?? 0)
@@ -38,7 +39,11 @@ try {
               AND longitude BETWEEN -180 AND 180
           `)
           .get()?.c ?? 0);
-  const resultTable = workerData.type === "embedding" ? "embeddings" : "locations";
+  const resultTable = workerData.type === "embedding"
+    ? "embeddings"
+    : workerData.type === "ocr"
+      ? OCR_INDEX_TABLE
+      : "locations";
   const expectedLocationVersion =
     workerData.locationGeocoderVersion ?? getLocationGeocoderVersion("smart");
   const locationVersion =
@@ -64,7 +69,13 @@ try {
             `)
             .get()?.c ?? 0)
         : 0
-      : tableExists(resultTable)
+      : workerData.type === "ocr" && tableExists(resultTable)
+        ? (db.prepare(`
+            SELECT COUNT(*) AS c FROM files f
+            JOIN ${OCR_INDEX_TABLE} i ON i.file_id = f.id
+            WHERE f.file_type = 'image' AND i.model_version = ?
+          `).get(OCR_PIPELINE_VERSION)?.c ?? 0)
+        : tableExists(resultTable)
         ? (db.prepare(`SELECT COUNT(*) AS c FROM ${resultTable}`).get()?.c ?? 0)
         : 0;
 

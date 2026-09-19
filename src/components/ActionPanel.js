@@ -233,6 +233,50 @@ const SmartSearchInput = ({
   );
 };
 
+const TextSearchInput = ({ status, value, isSearching, onChange, onSearch, onReset }) => {
+  const resourceState = status.resource?.state;
+  const searchable = status.done > 0 && resourceState === "ready";
+  let placeholder = "Search text in your photos";
+  if (resourceState === "download-required") placeholder = "Text search download required - install it in Settings";
+  else if (resourceState === "downloading") placeholder = `Downloading Text Search (${status.resource.progressPercent ?? 0}%)`;
+  else if (resourceState === "extracting") placeholder = "Installing Text Search resource...";
+  else if (resourceState === "download-failed") placeholder = "Text Search download failed - retry it in Settings";
+  else if (status.initError) placeholder = "OCR model unavailable — check Settings";
+  else if (!status.modelReady) placeholder = "Loading OCR model…";
+  else if (!searchable) placeholder = "Building text index… please wait";
+  else if (isSearching) placeholder = "Searching detected text…";
+  else if (status.total > status.done) placeholder = `Search available (${status.done} / ${status.total} indexed)`;
+
+  const submit = () => {
+    if (searchable && !isSearching && value.trim()) onSearch(value);
+  };
+
+  return (
+    <div className="smart-search-wrapper">
+      <div className="smart-search-input-row">
+        <input
+          type="text"
+          value={value}
+          disabled={!searchable || isSearching}
+          placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+          className="smart-search-input"
+        />
+        {searchable && !isSearching && value.trim() && (
+          <button className="smart-search-go-btn" onClick={submit} title="Search detected text">
+            <FontAwesomeIcon icon={faSearch} />
+          </button>
+        )}
+        {isSearching && <span className="smart-search-spinner" title="Searching…" />}
+        <div className="action-panel-reset">
+          <button onClick={onReset} title="Clear text search"><FontAwesomeIcon icon={faUndo} /></button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Shared FilterPanel component ─────────────────────────────────────────────
 
 const FilterPanel = ({ filters, options, settings, handlers, onReset }) => {
@@ -444,6 +488,12 @@ const ActionPanel = ({
   const [smartThreshold, setSmartThreshold] = useState(0.2);
   const [smartTopK, setSmartTopK] = useState(200);
   const [isSearching, setIsSearching] = useState(false);
+  const [textSearchTerm, setTextSearchTerm] = useState("");
+  const [textSearchStatus, setTextSearchStatus] = useState({
+    modelReady: false, total: 0, done: 0, percentage: 0, initError: null,
+    resource: { id: "ocr", state: "download-required", downloadSizeLabel: "25 MB" },
+  });
+  const [isTextSearching, setIsTextSearching] = useState(false);
 
   const [options, setOptions] = useState({
     devices: [],
@@ -534,6 +584,8 @@ const ActionPanel = ({
           "embedding:get-status",
         );
         if (status) setSmartSearchStatus(status);
+        const ocrStatus = await window.electron.ipcRenderer.invoke("ocr:get-status");
+        if (ocrStatus) setTextSearchStatus(ocrStatus);
       } catch {}
     };
 
@@ -554,6 +606,13 @@ const ActionPanel = ({
       }
     };
     return window.electron.ipcRenderer.on("embedding-progress", handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (data) => {
+      if (data) setTextSearchStatus((current) => ({ ...data, resource: data.resource ?? current.resource }));
+    };
+    return window.electron.ipcRenderer.on("ocr-progress", handler);
   }, []);
 
   // ── Auto-apply on state change ─────────────────────────────────────────────
@@ -598,6 +657,7 @@ const ActionPanel = ({
     setSearchBy("name");
     setSearchTerm("");
     setSmartSearchTerm("");
+    setTextSearchTerm("");
   };
 
   // Explore filters also clear sort/search
@@ -675,6 +735,31 @@ const ActionPanel = ({
       smartIds: null,
       smartScores: null,
     });
+  }, [onApply]);
+
+  const handleTextSearch = useCallback(async (term) => {
+    if (!term.trim()) {
+      onApply({ searchBy: "text", searchTerm: "", textIds: null, textMatches: null });
+      return;
+    }
+    setIsTextSearching(true);
+    try {
+      const result = await window.electron.ipcRenderer.invoke("ocr:search", { query: term, topK: 200 });
+      onApply({
+        searchBy: "text", searchTerm: term,
+        textIds: result.success ? result.results : [],
+        textMatches: result.success ? result.matches : {},
+      });
+    } catch (error) {
+      console.error("Text search error:", error);
+    } finally {
+      setIsTextSearching(false);
+    }
+  }, [onApply]);
+
+  const handleTextReset = useCallback(() => {
+    setTextSearchTerm("");
+    onApply({ searchBy: "text", searchTerm: "", textIds: null, textMatches: null });
   }, [onApply]);
 
   // ── Reset on panel key change ──────────────────────────────────────────────
@@ -772,8 +857,9 @@ const ActionPanel = ({
               setSearchBy(e.target.value);
               setSearchTerm("");
               setSmartSearchTerm("");
-              // Clear any active smart search when switching away
-              if (e.target.value !== "smart") {
+              setTextSearchTerm("");
+              // Clear any active relevance search when switching away.
+              if (e.target.value !== "smart" && e.target.value !== "text") {
                 onApply({ searchBy: e.target.value, searchTerm: "" });
               }
             }}
@@ -781,10 +867,11 @@ const ActionPanel = ({
             <option value="name">Name</option>
             <option value="media_id">ID</option>
             <option value="smart">Smart</option>
+            <option value="text">Text</option>
             <option value="location">Location</option>
           </select>
 
-          {searchBy !== "smart" ? (
+          {searchBy !== "smart" && searchBy !== "text" ? (
             <>
               <input
                 type="text"
@@ -802,7 +889,7 @@ const ActionPanel = ({
                 </button>
               </div>
             </>
-          ) : (
+          ) : searchBy === "smart" ? (
             <SmartSearchInput
               status={smartSearchStatus}
               value={smartSearchTerm}
@@ -814,6 +901,15 @@ const ActionPanel = ({
               setThreshold={setSmartThreshold}
               topK={smartTopK}
               setTopK={setSmartTopK}
+            />
+          ) : (
+            <TextSearchInput
+              status={textSearchStatus}
+              value={textSearchTerm}
+              isSearching={isTextSearching}
+              onChange={setTextSearchTerm}
+              onSearch={handleTextSearch}
+              onReset={handleTextReset}
             />
           )}
         </div>

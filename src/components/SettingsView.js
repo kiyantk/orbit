@@ -310,7 +310,7 @@ const SmartSearchStatus = () => {
   return (
     <div className="smart-search-status-panel">
       <div className="smart-search-status-header">
-        <span className="smart-search-status-title">Smart Search</span>
+        <span className="smart-search-status-title">Embeddings</span>
         <span
           className="smart-search-status-badge"
           style={{ color: statusColor }}
@@ -387,6 +387,92 @@ const SmartSearchStatus = () => {
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
+const OcrStatus = () => {
+  const [status, setStatus] = useState({
+    modelReady: false, initError: null, total: 0, done: 0, paused: false, pausePending: false,
+    resource: { id: "ocr", state: "download-required", downloadSizeLabel: "25 MB" },
+  });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const fetchStatus = useCallback(async () => {
+    try {
+      const next = await window.electron.ipcRenderer.invoke("ocr:get-status");
+      if (next) setStatus(next);
+      return next;
+    } finally { setLoading(false); }
+  }, []);
+  useEffect(() => {
+    fetchStatus();
+    const timer = setInterval(fetchStatus, 4000);
+    return () => clearInterval(timer);
+  }, [fetchStatus]);
+  useEffect(() => window.electron.ipcRenderer.on("ocr-progress", (next) => {
+    if (next) setStatus((current) => ({ ...next, resource: next.resource ?? current.resource }));
+    setLoading(false);
+    setBusy(false);
+  }), []);
+  useEffect(() => window.electron.ipcRenderer.on("resource-status", (resource) => {
+    if (resource?.id === "ocr") setStatus((current) => ({ ...current, resource }));
+  }), []);
+
+  const resource = status.resource ?? {};
+  const resourceState = resource.state ?? "download-required";
+  const resourceBusy = resourceState === "downloading" || resourceState === "extracting";
+  const unavailable = resourceState === "download-required" || resourceState === "download-failed";
+  const complete = status.total > 0 && status.done >= status.total;
+  const percentage = status.total > 0 ? Math.round(status.done / status.total * 100) : 0;
+  let label = "Indexing in background… " + percentage + "%";
+  let color = "#8f8f8f";
+  if (loading) { label = "Checking…"; color = "#888"; }
+  else if (resourceState === "download-required") { label = "Download required"; color = "#ffd577"; }
+  else if (resourceState === "downloading") { label = "Downloading " + (resource.progressPercent ?? 0) + "%"; color = "#a78bfa"; }
+  else if (resourceState === "extracting") { label = "Extracting/installing..."; color = "#a78bfa"; }
+  else if (resourceState === "download-failed") { label = "Download failed"; color = "#ff9a9a"; }
+  else if (status.initError) { label = "Error loading OCR model"; color = "#ff9a9a"; }
+  else if (status.paused) { label = "Paused"; color = "#888"; }
+  else if (!status.modelReady) { label = "Loading OCR model…"; color = "#ffd577"; }
+  else if (complete) { label = "Ready"; color = "#d8d8d8"; }
+  else if (!status.total) { label = "Ready - no images indexed yet"; color = "#888"; }
+  const download = async () => {
+    setBusy(true);
+    try { await window.electron.ipcRenderer.invoke("resource:download", "ocr"); await fetchStatus(); }
+    finally { setBusy(false); }
+  };
+  const togglePause = async () => {
+    setBusy(true);
+    try { await window.electron.ipcRenderer.invoke(status.paused ? "ocr:resume" : "ocr:pause"); await fetchStatus(); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="smart-search-status-panel">
+      <div className="smart-search-status-header">
+        <span className="smart-search-status-title">Text</span>
+        <span className="smart-search-status-badge" style={{ color }}>{label}</span>
+      </div>
+      {(resourceBusy || status.total > 0) && <div className="smart-search-status-bar-track">
+        <div className="smart-search-status-bar-fill" style={{
+          width: String(resourceBusy ? resource.progressPercent ?? 0 : percentage) + "%",
+          backgroundColor: resourceBusy ? "#a78bfa" : complete ? "#4caf82" : "#a78bfa",
+        }} />
+      </div>}
+      <div className="smart-search-status-counts-row">
+        {resourceBusy ? <div className="smart-search-status-counts">
+          {resource.downloadedBytes ? formatBytes(resource.downloadedBytes) + " / " + formatBytes(resource.totalBytes) : "Preparing download..."}
+        </div> : status.total > 0 ? <div className="smart-search-status-counts">
+          {status.done.toLocaleString()} / {status.total.toLocaleString()} images
+        </div> : null}
+        {unavailable ? <button className="smart-search-status-button" onClick={download} disabled={busy}>
+          Download ({resource.downloadSizeLabel ?? "25 MB"})
+        </button> : resourceBusy ? <button className="smart-search-status-button" disabled>Installing...</button> :
+          <button className="smart-search-status-button" onClick={togglePause} disabled={busy || status.pausePending}>
+            {status.paused ? "Resume" : "Pause"}
+          </button>}
+      </div>
+      {(resource.error || status.initError) && <div className="smart-search-status-error">{resource.error || status.initError}</div>}
+    </div>
+  );
+};
+
 const SettingsView = ({
   currentSettings,
   applySettings,
@@ -1406,12 +1492,12 @@ const SettingsView = ({
                   <span>Don't close the app</span>
                 </div>
               )}
-              <h3 style={{ marginTop: 18 }}>Smart search</h3>
+              <h3 style={{ marginTop: 18 }}>Smart Search</h3>
               {/* ── Smart Search Status ── */}
               <div style={{ marginTop: 10 }}>
                 <SmartSearchStatus />
               </div>
-              <h3 style={{ marginTop: 18 }}>Location indexing</h3>
+              <h3 style={{ marginTop: 18 }}>Places</h3>
 
               <div
                 className="smart-search-status-panel"
@@ -1484,6 +1570,10 @@ const SettingsView = ({
                     {locationResource.error}
                   </div>
                 )}
+              </div>
+              <h3 style={{ marginTop: 18 }}>Text Recognition</h3>
+              <div style={{ marginTop: 10 }}>
+                <OcrStatus />
               </div>
             </div>
           )}

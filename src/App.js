@@ -86,6 +86,28 @@ const App = () => {
         }
         return;
       }
+      if (data.searchBy === "text") {
+        if (data.textIds?.length > 0) {
+          setFilters({
+            ids: data.textIds,
+            _textSearch: true,
+            _textMatches: data.textMatches || {},
+            searchBy: "text",
+            searchTerm: data.searchTerm,
+          });
+        } else if (data.searchTerm) {
+          setFilters({
+            ids: [-1],
+            _textSearch: true,
+            _textMatches: {},
+            searchBy: "text",
+            searchTerm: data.searchTerm,
+          });
+        } else {
+          setFilters({});
+        }
+        return;
+      }
       setExplorerScroll(0);
       setFilters(data);
     } else if (actionPanelType === "shuffle-filter") {
@@ -494,9 +516,19 @@ const App = () => {
                     panelKey={previewPanelKey}
                     selectedItemAvailable={selectedItemAvailable}
                     smartScore={
-                      selectedItem && filters?._smartScores
+                      selectedItem && filters?._smartSearch && filters?._smartScores
                         ? (filters._smartScores[selectedItem.id] ?? null)
                         : null
+                    }
+                    textMatch={
+                      selectedItem && filters?._textSearch && filters?._textMatches
+                        ? (filters._textMatches[selectedItem.id] ?? null)
+                        : null
+                    }
+                    textSearchTerm={
+                      selectedItem && filters?._textSearch
+                        ? (filters.searchTerm ?? "")
+                        : ""
                     }
                   />
                 ) : (

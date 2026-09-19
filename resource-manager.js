@@ -41,6 +41,23 @@ const RESOURCE_DEFINITIONS = Object.freeze({
       "Xenova/clip-vit-base-patch32/onnx/vision_model_quantized.onnx",
     ],
   }),
+  ocr: Object.freeze({
+    id: "ocr",
+    version: "v2",
+    downloadUrl:
+      "https://github.com/kiyantk/orbit/releases/download/resources-v1/orbit-ocr-v2.tar.gz",
+    downloadSizeBytes: 95_000_000,
+    downloadSizeLabel: "95 MB",
+    installDirectory: "ocr",
+    expectedFiles: [
+      "PaddleOCR-v6-medium/detection/inference.json",
+      "PaddleOCR-v6-medium/detection/inference.onnx",
+      "PaddleOCR-v6-medium/detection/inference.yml",
+      "PaddleOCR-v6-medium/recognition/inference.json",
+      "PaddleOCR-v6-medium/recognition/inference.onnx",
+      "PaddleOCR-v6-medium/recognition/inference.yml",
+    ],
+  }),
 });
 
 const MAX_REDIRECTS = 5;
