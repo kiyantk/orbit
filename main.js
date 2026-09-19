@@ -444,6 +444,7 @@ const defaultConfig = {
   unavailableBehaviour: "overlay", // "overlay" or "thumbnail"
   memoriesLayout: "list",
   placesSortBy: "count",
+  placesChronological: false,
   placesThumbnails: "random",
   placesSubtitles: "count",
   placesMinCount: 1,
@@ -4477,6 +4478,48 @@ function pickThumbnails(db, ids, limit = 1) {
   return thumbnails;
 }
 
+// A visit segment continues until the place changes. This keeps consecutive
+// occurrences together while preserving a return visit after another place.
+function createPlaceVisitSegments(rows, getPlaces) {
+  const segments = [];
+  let previousSegments = new Map();
+  const sortedRows = [...rows].sort(
+    (a, b) => (a.create_date || 0) - (b.create_date || 0) || a.id - b.id,
+  );
+
+  for (const row of sortedRows) {
+    const timestamp = Number(row.create_date) || 0;
+    const currentSegments = new Map();
+
+    for (const place of getPlaces(row)) {
+      const previous = previousSegments.get(place.key);
+      const canContinue = Boolean(previous);
+      const segment = canContinue
+        ? previous
+        : {
+            ...place,
+            count: 0,
+            ids: [],
+            startVisit: timestamp,
+            lastVisit: timestamp,
+            lastThumbnail: null,
+          };
+
+      if (!canContinue) segments.push(segment);
+      segment.count++;
+      segment.ids.push(row.id);
+      segment.lastVisit = timestamp;
+      if (row.file_type === "image" && row.thumbnail_path) {
+        segment.lastThumbnail = { id: row.id, thumbnail_path: row.thumbnail_path };
+      }
+      currentSegments.set(place.key, segment);
+    }
+    previousSegments = currentSegments;
+  }
+
+  return segments;
+}
+
 // ─── Countries ────────────────────────────────────────────────────────────────
 //
 // Source: files.country  (the column on the file itself, not locations)
@@ -4488,6 +4531,7 @@ ipcMain.handle("location:get-countries", async (event, currentSettings = {}) => 
 
     const {
       placesSortBy = "count",
+      placesChronological = false,
       placesThumbnails = "random",
       placesMinCount = 1,
       placesExcludeFlights = false,
@@ -4545,7 +4589,16 @@ ipcMain.handle("location:get-countries", async (event, currentSettings = {}) => 
       }
     }
 
-    let result = Object.values(countryMap)
+    const entries = placesChronological
+      ? createPlaceVisitSegments(rows, (row) =>
+          normalizeCountries(row.country).map((country) => ({
+            key: country,
+            country,
+          })),
+        )
+      : Object.values(countryMap);
+
+    let result = entries
       .filter((x) => x.count >= placesMinCount)
       .map((entry) => {
         const thumbnail =
@@ -4557,12 +4610,15 @@ ipcMain.handle("location:get-countries", async (event, currentSettings = {}) => 
           country: entry.country,
           count: entry.count,
           ids: entry.ids,
+          startVisit: entry.startVisit,
           lastVisit: entry.lastVisit,
           thumbnails: thumbnail ? [thumbnail] : [],
         };
       });
 
-    if (placesSortBy === "last_visit") {
+    if (placesChronological) {
+      result.sort((a, b) => b.startVisit - a.startVisit);
+    } else if (placesSortBy === "last_visit") {
       result.sort((a, b) => b.lastVisit - a.lastVisit);
     } else if (placesSortBy === "population") {
       result.sort((a, b) => {
@@ -4596,6 +4652,7 @@ ipcMain.handle("location:get-regions", async (event, currentSettings = {}) => {
 
     const {
       placesSortBy = "count",
+      placesChronological = false,
       placesThumbnails = "random",
       placesMinCount = 1,
       placesExcludeFlights = false,
@@ -4657,7 +4714,17 @@ ipcMain.handle("location:get-regions", async (event, currentSettings = {}) => {
       }
     }
 
-    let result = Object.values(map)
+    const entries = placesChronological
+      ? createPlaceVisitSegments(rows, (row) => [
+          {
+            key: `${row.country}|${row.subdivision}`,
+            country: row.country,
+            subdivision: row.subdivision,
+          },
+        ])
+      : Object.values(map);
+
+    let result = entries
       .filter((x) => x.count >= placesMinCount)
       .map((entry) => {
         const thumbnail =
@@ -4670,12 +4737,15 @@ ipcMain.handle("location:get-regions", async (event, currentSettings = {}) => {
           subdivision: entry.subdivision,
           count: entry.count,
           ids: entry.ids,
+          startVisit: entry.startVisit,
           lastVisit: entry.lastVisit,
           thumbnails: thumbnail ? [thumbnail] : [],
         };
       });
 
-    if (placesSortBy === "last_visit") {
+    if (placesChronological) {
+      result.sort((a, b) => b.startVisit - a.startVisit);
+    } else if (placesSortBy === "last_visit") {
       result.sort((a, b) => b.lastVisit - a.lastVisit);
     } else if (placesSortBy === "alphabetical") {
       result.sort((a, b) => a.subdivision.localeCompare(b.subdivision));
@@ -4701,6 +4771,7 @@ ipcMain.handle("location:get-cities", async (event, currentSettings = {}) => {
 
     const {
       placesSortBy = "count",
+      placesChronological = false,
       placesThumbnails = "random",
       placesMinCount = 1,
       placesExcludeFlights = false,
@@ -4770,7 +4841,18 @@ ipcMain.handle("location:get-cities", async (event, currentSettings = {}) => {
       }
     }
 
-    let result = Object.values(map)
+    const entries = placesChronological
+      ? createPlaceVisitSegments(rows, (row) => [
+          {
+            key: `${row.country}|${row.subdivision}|${row.city}`,
+            country: row.country,
+            subdivision: row.subdivision,
+            city: row.city,
+          },
+        ])
+      : Object.values(map);
+
+    let result = entries
       .filter((x) => x.count >= placesMinCount)
       .map((entry) => {
         const thumbnail =
@@ -4784,12 +4866,15 @@ ipcMain.handle("location:get-cities", async (event, currentSettings = {}) => {
           city: entry.city,
           count: entry.count,
           ids: entry.ids,
+          startVisit: entry.startVisit,
           lastVisit: entry.lastVisit,
           thumbnails: thumbnail ? [thumbnail] : [],
         };
       });
 
-    if (placesSortBy === "last_visit") {
+    if (placesChronological) {
+      result.sort((a, b) => b.startVisit - a.startVisit);
+    } else if (placesSortBy === "last_visit") {
       result.sort((a, b) => b.lastVisit - a.lastVisit);
     } else if (placesSortBy === "alphabetical") {
       result.sort((a, b) => a.city.localeCompare(b.city));

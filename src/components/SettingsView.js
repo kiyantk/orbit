@@ -1227,14 +1227,14 @@ const SettingsView = ({
               </SettingsRow>
 
               <SettingsRow>
-                <span>Place names:</span>
+                <span>Country names:</span>
                 <select
-                  value={settings.placesNameDisplay ?? "english"}
-                  onChange={handleSelect("placesNameDisplay")}
+                  value={settings.placesCountryNames ?? "name"}
+                  onChange={handleSelect("placesCountryNames")}
                   className="settings-itemstyle-select"
                 >
-                  <option value="english">English name if available</option>
-                  <option value="local">Local name</option>
+                  <option value="name">Name</option>
+                  <option value="code">Code</option>
                 </select>
               </SettingsRow>
 
@@ -1257,15 +1257,32 @@ const SettingsView = ({
               </SettingsRow>
 
               <SettingsRow>
-                <span>Country names:</span>
+                <span>Place names:</span>
                 <select
-                  value={settings.placesCountryNames ?? "name"}
-                  onChange={handleSelect("placesCountryNames")}
+                  value={settings.placesNameDisplay ?? "english"}
+                  onChange={handleSelect("placesNameDisplay")}
                   className="settings-itemstyle-select"
                 >
-                  <option value="name">Name</option>
-                  <option value="code">Code</option>
+                  <option value="english">English name if available</option>
+                  <option value="local">Local name</option>
                 </select>
+              </SettingsRow>
+
+              <SettingsRow>
+                <div className="slider-wrapper">
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={!!settings.placesChronological}
+                      onChange={handleCheckbox("placesChronological")}
+                    />
+                    <div className="slider round"></div>
+                  </label>
+                </div>
+                <span>Chronological mode</span>
+                <span className="settings-hint">
+                  Shows each visit to a place separately.
+                </span>
               </SettingsRow>
 
               <SettingsRow>
@@ -1273,6 +1290,7 @@ const SettingsView = ({
                 <select
                   value={settings.placesSortBy ?? "count"}
                   onChange={handleSelect("placesSortBy")}
+                  disabled={!!settings.placesChronological}
                   className="settings-itemstyle-select"
                 >
                   <option value="count">Item count (default)</option>

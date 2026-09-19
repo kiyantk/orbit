@@ -112,6 +112,31 @@ function formatCountSubtitle(item, mode) {
   }
 }
 
+// Location records can differ internally while resolving to the same visible
+// place. In chronological mode, coalesce only adjacent cards with the same
+// display identity so a return after another visible place remains separate.
+function mergeAdjacentPlaceItems(items, chronological) {
+  if (!chronological) return items;
+
+  return items.reduce((merged, item) => {
+    const previous = merged[merged.length - 1];
+    if (
+      !previous ||
+      previous.label !== item.label ||
+      previous.subtitle !== item.subtitle
+    ) {
+      merged.push({ ...item });
+      return merged;
+    }
+
+    previous.count += item.count;
+    previous.ids = [...previous.ids, ...item.ids];
+    previous.lastVisit = Math.max(previous.lastVisit || 0, item.lastVisit || 0);
+    if (item.thumbnails?.length) previous.thumbnails = item.thumbnails;
+    return merged;
+  }, []);
+}
+
 // ─── Title auto-fit ───────────────────────────────────────────────────────────
 function fitCardTitle(el) {
   if (!el) return;
@@ -195,6 +220,11 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
   const [iso3166, setIso3166] = useState(null);
   const {
     placesSubtitles = "count",
+    placesChronological = false,
+    placesSortBy = "count",
+    placesThumbnails = "random",
+    placesMinCount = 1,
+    placesExcludeFlights = false,
     placesNameDisplay = "english",
     placesRegionNames = "english",
     placesCountryNames = "name",
@@ -233,6 +263,11 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
     placesNameDisplay,
     placesRegionNames,
     placesCountryNames,
+    placesChronological,
+    placesSortBy,
+    placesThumbnails,
+    placesMinCount,
+    placesExcludeFlights,
   ]);
 
   const fetchCountries = async () => {
@@ -242,13 +277,18 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
         "location:get-countries",
         currentSettings,
       );
+      if (!res?.success) {
+        console.error("Failed to fetch countries:", res?.error);
+        setItems([]);
+        return;
+      }
       const enriched = await Promise.all(
         res.data.map(async (row) => ({
           ...row,
           label: await getCountryLabel(row.country, placesCountryNames),
         })),
       );
-      setItems(enriched);
+      setItems(mergeAdjacentPlaceItems(enriched, placesChronological));
     } finally {
       setLoading(false);
     }
@@ -263,6 +303,11 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
         "location:get-regions",
         currentSettings,
       );
+      if (!res?.success) {
+        console.error("Failed to fetch regions:", res?.error);
+        setItems([]);
+        return;
+      }
 
       const enriched = await Promise.all(
         res.data.map(async (row) => {
@@ -285,7 +330,7 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
         }),
       );
 
-      setItems(enriched);
+      setItems(mergeAdjacentPlaceItems(enriched, placesChronological));
     } finally {
       setLoading(false);
     }
@@ -299,6 +344,11 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
         "location:get-cities",
         currentSettings,
       );
+      if (!res?.success) {
+        console.error("Failed to fetch cities:", res?.error);
+        setItems([]);
+        return;
+      }
 
       const enriched = await Promise.all(
         res.data.map(async (row) => {
@@ -328,7 +378,7 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
         }),
       );
 
-      setItems(enriched);
+      setItems(mergeAdjacentPlaceItems(enriched, placesChronological));
     } finally {
       setLoading(false);
     }
