@@ -16,6 +16,8 @@ import {
   faLocationDot,
   faMap,
   faChartSimple,
+  faIdCard,
+  faIdCardClip,
 } from "@fortawesome/free-solid-svg-icons";
 import FolderList from "./FolderList";
 import HeicPopup from "./HeicPopup";
@@ -40,7 +42,7 @@ const TABS = [
 ];
 
 const TAB_ICONS = {
-  User: faUser,
+  User: faIdCardClip,
   Media: faPhotoFilm,
   Explorer: faTableCells,
   Map: faMap,
@@ -463,6 +465,96 @@ const OcrStatus = () => {
         </div> : null}
         {unavailable ? <button className="smart-search-status-button" onClick={download} disabled={busy}>
           Download ({resource.downloadSizeLabel ?? "25 MB"})
+        </button> : resourceBusy ? <button className="smart-search-status-button" disabled>Installing...</button> :
+          <button className="smart-search-status-button" onClick={togglePause} disabled={busy || status.pausePending}>
+            {status.paused ? "Resume" : "Pause"}
+          </button>}
+      </div>
+      {(resource.error || status.initError) && <div className="smart-search-status-error">{resource.error || status.initError}</div>}
+    </div>
+  );
+};
+
+const FacialRecognitionStatus = () => {
+  const [status, setStatus] = useState({
+    modelReady: false, initError: null, total: 0, done: 0, faces: 0, people: 0,
+    paused: false, pausePending: false,
+    resource: { id: "facial-recognition", state: "download-required", downloadSizeLabel: "236 MB" },
+  });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const fetchStatus = useCallback(async () => {
+    try {
+      const next = await window.electron.ipcRenderer.invoke("facial-recognition:get-status");
+      if (next) setStatus(next);
+      return next;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    fetchStatus();
+    const timer = setInterval(fetchStatus, 4000);
+    return () => clearInterval(timer);
+  }, [fetchStatus]);
+  useEffect(() => window.electron.ipcRenderer.on("facial-recognition-progress", (next) => {
+    if (next) setStatus((current) => ({ ...next, resource: next.resource ?? current.resource }));
+    setLoading(false);
+    setBusy(false);
+  }), []);
+  useEffect(() => window.electron.ipcRenderer.on("resource-status", (resource) => {
+    if (resource?.id === "facial-recognition") setStatus((current) => ({ ...current, resource }));
+  }), []);
+
+  const resource = status.resource ?? {};
+  const resourceState = resource.state ?? "download-required";
+  const resourceBusy = resourceState === "downloading" || resourceState === "extracting";
+  const unavailable = resourceState === "download-required" || resourceState === "download-failed";
+  const complete = status.total > 0 && status.done >= status.total;
+  const percentage = status.total > 0 ? Math.round(status.done / status.total * 100) : 0;
+  let label = "Indexing in background… " + percentage + "%";
+  let color = "#8f8f8f";
+  if (loading) { label = "Checking…"; color = "#888"; }
+  else if (resourceState === "download-required") { label = "Download required"; color = "#ffd577"; }
+  else if (resourceState === "downloading") { label = "Downloading " + (resource.progressPercent ?? 0) + "%"; color = "#a78bfa"; }
+  else if (resourceState === "extracting") { label = "Extracting/installing..."; color = "#a78bfa"; }
+  else if (resourceState === "download-failed") { label = "Download failed"; color = "#ff9a9a"; }
+  else if (status.initError) { label = "Error loading face models"; color = "#ff9a9a"; }
+  else if (status.paused) { label = "Paused"; color = "#888"; }
+  else if (!status.modelReady) { label = "Loading face models…"; color = "#ffd577"; }
+  else if (complete) { label = "Ready"; color = "#d8d8d8"; }
+  else if (!status.total) { label = "Ready - no images indexed yet"; color = "#888"; }
+
+  const download = async () => {
+    setBusy(true);
+    try { await window.electron.ipcRenderer.invoke("resource:download", "facial-recognition"); await fetchStatus(); }
+    finally { setBusy(false); }
+  };
+  const togglePause = async () => {
+    setBusy(true);
+    try { await window.electron.ipcRenderer.invoke(status.paused ? "facial-recognition:resume" : "facial-recognition:pause"); await fetchStatus(); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="smart-search-status-panel">
+      <div className="smart-search-status-header">
+        <span className="smart-search-status-title">Faces</span>
+        <span className="smart-search-status-badge" style={{ color }}>{label}</span>
+      </div>
+      {(resourceBusy || status.total > 0) && <div className="smart-search-status-bar-track">
+        <div className="smart-search-status-bar-fill" style={{
+          width: String(resourceBusy ? resource.progressPercent ?? 0 : percentage) + "%",
+          backgroundColor: resourceBusy ? "#a78bfa" : complete ? "#4caf82" : "#a78bfa",
+        }} />
+      </div>}
+      <div className="smart-search-status-counts-row">
+        {resourceBusy ? <div className="smart-search-status-counts">
+          {resource.downloadedBytes ? formatBytes(resource.downloadedBytes) + " / " + formatBytes(resource.totalBytes) : "Preparing download..."}
+        </div> : status.total > 0 ? <div className="smart-search-status-counts">
+          {status.done.toLocaleString()} / {status.total.toLocaleString()} images · {Number(status.people ?? 0).toLocaleString()} people
+        </div> : null}
+        {unavailable ? <button className="smart-search-status-button" onClick={download} disabled={busy}>
+          Download ({resource.downloadSizeLabel ?? "236 MB"})
         </button> : resourceBusy ? <button className="smart-search-status-button" disabled>Installing...</button> :
           <button className="smart-search-status-button" onClick={togglePause} disabled={busy || status.pausePending}>
             {status.paused ? "Resume" : "Pause"}
@@ -907,6 +999,44 @@ const SettingsView = ({
       onConfirm: () => {
         setConfirmPopup(null);
         runTool("cleanup-orphaned-index-data", "Cleaning up indexing data");
+      },
+    });
+  };
+
+  const rebuildFacialRecognition = async () => {
+    setShowToolsPopup(false);
+    let status;
+    try {
+      status = await ipc("facial-recognition:get-status");
+    } catch (error) {
+      setIndexingStatus(`Error: ${error.message}`);
+      return;
+    }
+    if (!status?.resource?.installed) {
+      setIndexingStatus("Download Facial Recognition in Settings before rebuilding it.");
+      return;
+    }
+    setConfirmPopup({
+      message: "Rebuild facial recognition?",
+      subMessage:
+        "This clears detected faces and People groups, then scans your library again.",
+      onConfirm: async () => {
+        setConfirmPopup(null);
+        setIndexingStatus("Rebuilding facial recognition...");
+        setIsIndexing(true);
+        try {
+          const result = await ipc("facial-recognition:rebuild");
+          setIndexingStatus(
+            result?.ok
+              ? "Facial recognition rebuild started."
+              : `Error: ${result?.error || "Unable to start facial-recognition rebuild."}`,
+          );
+          if (result?.ok) setTimeout(() => setIndexingStatus(null), 5000);
+        } catch (error) {
+          setIndexingStatus(`Error: ${error.message}`);
+        } finally {
+          setIsIndexing(false);
+        }
       },
     });
   };
@@ -1585,6 +1715,10 @@ const SettingsView = ({
               <div style={{ marginTop: 10 }}>
                 <OcrStatus />
               </div>
+              <h3 style={{ marginTop: 18 }}>Facial Recognition</h3>
+              <div style={{ marginTop: 10 }}>
+                <FacialRecognitionStatus />
+              </div>
             </div>
           )}
 
@@ -2002,6 +2136,10 @@ const SettingsView = ({
               {
                 label: "Clean Up Indexing Data",
                 action: cleanupOrphanedIndexData,
+              },
+              {
+                label: "Rebuild Facial Recognition",
+                action: rebuildFacialRecognition,
               },
               {
                 label: "Generate HEIC Thumbnails",

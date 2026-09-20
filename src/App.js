@@ -14,6 +14,7 @@ import TagsView from "./components/TagsView";
 import ShuffleView from "./components/ShuffleView";
 import MemoriesView from "./components/MemoriesView";
 import PlacesView from "./components/PlacesView";
+import PeopleView from "./components/PeopleView";
 
 function hasActiveExplorerConstraint(activeFilters) {
   return Object.entries(activeFilters || {}).some(([key, value]) => {
@@ -496,6 +497,15 @@ const App = () => {
             <PlacesView
               currentSettings={settings}
               onViewPlace={(ids) => {
+                setFilters({ ids });
+                setExplorerScroll(0);
+                setActiveView("explore");
+              }}
+            />
+          )}
+          {activeView === "people" && (
+            <PeopleView
+              onViewPerson={(ids) => {
                 setFilters({ ids });
                 setExplorerScroll(0);
                 setActiveView("explore");

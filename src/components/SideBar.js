@@ -20,6 +20,9 @@ import {
   faSort,
   faTags,
   faTrash,
+  faUser,
+  faUserGroup,
+  faUsers,
 } from "@fortawesome/free-solid-svg-icons";
 
 const SideBar = ({
@@ -81,6 +84,13 @@ const SideBar = ({
       >
         <FontAwesomeIcon icon={faLocationDot} />
         <span className="tooltip">Places</span>
+      </button>
+      <button
+        className={`side-bar-btn ${activeView === "people" ? "side-bar-active" : ""}`}
+        onClick={() => switchView("people")}
+      >
+        <FontAwesomeIcon icon={faUser} />
+        <span className="tooltip">People</span>
       </button>
       <button
         className={`side-bar-btn ${activeView === "tags" ? "side-bar-active" : ""}`}

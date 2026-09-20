@@ -21,12 +21,20 @@ const { Worker } = require("worker_threads");
 const EmbeddingService = require("./embedding-service");
 const LocationService  = require("./location-service");
 const OcrService = require("./ocr-service");
+const FacialRecognitionService = require("./facial-recognition-service");
 const { ResourceManager } = require("./resource-manager");
 const {
   getLocationGeocoderVersion,
   normalizeLocationSelectionMode,
 } = require("./location-schema");
 const { OCR_FTS_TABLE, OCR_INDEX_TABLE } = require("./ocr-schema");
+const {
+  FACE_SCAN_TABLE,
+  FACE_TABLE,
+  PEOPLE_TABLE,
+  FACE_ASSIGNMENT_TABLE,
+  PERSON_REPRESENTATIVE_TABLE,
+} = require("./facial-recognition-schema");
 const crypto = require("crypto");
 const { parse } = require("csv-parse/sync");
 const AdmZip = require("adm-zip");
@@ -34,6 +42,7 @@ let embeddingService = null;
 let _textPipeline = null;
 let locationService  = null;
 let ocrService = null;
+let facialRecognitionService = null;
 let resourceManager = null;
 
 if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
@@ -136,6 +145,7 @@ app.whenReady().then(() => {
     setTimeout(startEmbeddingService, 3000);
     setTimeout(startLocationService,  5000);
     setTimeout(startOcrService,       7000);
+    setTimeout(startFacialRecognitionService, 9000);
   });
 
   // mainWindow.once("ready-to-show", () => {
@@ -466,6 +476,7 @@ const defaultConfig = {
   smartSearchPaused: false,
   locationIndexingPaused: false,
   ocrIndexingPaused: false,
+  facialRecognitionPaused: false,
   driveLetterMap: {},
   hiddenFolders: [],
 };
@@ -675,6 +686,60 @@ function initDatabase() {
   }
 }
 
+function hasDatabaseTable(tableName) {
+  return !!db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName);
+}
+
+// Face rows have no database-level foreign keys because this database supports
+// upgrades from older versions. Keep derived face data tidy when media leaves
+// the index, and remove automatic People groups that no longer contain faces.
+function removeFacialRecognitionDataForFiles(fileIds) {
+  const ids = Array.from(new Set(fileIds.map(Number).filter(Number.isInteger)));
+  if (!ids.length || !hasDatabaseTable(FACE_TABLE)) return;
+  const filePlaceholders = ids.map(() => "?").join(",");
+  const faceIds = db
+    .prepare(`SELECT id FROM ${FACE_TABLE} WHERE file_id IN (${filePlaceholders})`)
+    .all(...ids)
+    .map((row) => row.id);
+  if (faceIds.length) {
+    const facePlaceholders = faceIds.map(() => "?").join(",");
+    if (hasDatabaseTable(FACE_ASSIGNMENT_TABLE)) {
+      db.prepare(`DELETE FROM ${FACE_ASSIGNMENT_TABLE} WHERE face_id IN (${facePlaceholders})`).run(...faceIds);
+    }
+    if (hasDatabaseTable(PERSON_REPRESENTATIVE_TABLE)) {
+      db.prepare(`DELETE FROM ${PERSON_REPRESENTATIVE_TABLE} WHERE face_id IN (${facePlaceholders})`).run(...faceIds);
+    }
+    db.prepare(`DELETE FROM ${FACE_TABLE} WHERE id IN (${facePlaceholders})`).run(...faceIds);
+  }
+  if (hasDatabaseTable(FACE_SCAN_TABLE)) {
+    db.prepare(`DELETE FROM ${FACE_SCAN_TABLE} WHERE file_id IN (${filePlaceholders})`).run(...ids);
+  }
+  if (hasDatabaseTable(PEOPLE_TABLE) && hasDatabaseTable(FACE_ASSIGNMENT_TABLE)) {
+    db.prepare(`
+      UPDATE ${PEOPLE_TABLE}
+      SET cover_face_id = (
+        SELECT a.face_id
+        FROM ${FACE_ASSIGNMENT_TABLE} a
+        JOIN ${FACE_TABLE} f ON f.id = a.face_id
+        WHERE a.person_id = ${PEOPLE_TABLE}.id
+        ORDER BY f.recognition_quality DESC, f.id ASC
+        LIMIT 1
+      )
+      WHERE cover_face_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM ${FACE_TABLE} f WHERE f.id = ${PEOPLE_TABLE}.cover_face_id
+      )
+    `).run();
+    db.prepare(`
+      DELETE FROM ${PEOPLE_TABLE}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM ${FACE_ASSIGNMENT_TABLE} a WHERE a.person_id = ${PEOPLE_TABLE}.id
+      )
+    `).run();
+  }
+}
+
 function startEmbeddingService() {
   if (embeddingService) return;
   if (!resourceManager?.isInstalled("smart-search")) return;
@@ -726,6 +791,22 @@ function startOcrService() {
     return;
   }
   ocrService.start();
+}
+
+function startFacialRecognitionService() {
+  if (facialRecognitionService) return;
+  if (!resourceManager?.isInstalled("facial-recognition")) return;
+  initDatabase();
+  facialRecognitionService = new FacialRecognitionService(
+    db,
+    () => mainWindow,
+    resourceManager.getInstallDirectory("facial-recognition"),
+  );
+  if (readConfig().facialRecognitionPaused) {
+    facialRecognitionService.setInitialPaused(true);
+    return;
+  }
+  facialRecognitionService.start();
 }
 
 ipcMain.handle("read-file", async (_event, relativePath) => {
@@ -2612,6 +2693,7 @@ ipcMain.handle("remove-folder-data", async (event, folderPath) => {
       if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ocr_index'").get()) {
         db.prepare("DELETE FROM ocr_index WHERE file_id IN (SELECT id FROM files WHERE folder_path = ?)").run(folderPath);
       }
+      removeFacialRecognitionDataForFiles([...fileIds]);
       // Delete files from DB
       db.prepare("DELETE FROM files WHERE folder_path = ?").run(folderPath);
 
@@ -2689,6 +2771,7 @@ ipcMain.handle("remove-item-from-index", async (event, ids) => {
         if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ocr_index'").get()) {
           db.prepare("DELETE FROM ocr_index WHERE file_id = ?").run(id);
         }
+        removeFacialRecognitionDataForFiles([id]);
 
         // 2. Remove item from DB
         const result = db.prepare("DELETE FROM files WHERE id = ?").run(id);
@@ -4452,6 +4535,100 @@ ipcMain.handle("ocr:resume", () => {
   }
 });
 
+// ─── Facial-recognition service IPC ────────────────────────────────────────
+
+ipcMain.handle("facial-recognition:get-status", async () => {
+  const resource = getResourceStatus("facial-recognition");
+  if (!facialRecognitionService || !facialRecognitionService._worker) {
+    const progress = await getProgressSnapshot("facial-recognition");
+    const serviceStatus = facialRecognitionService?.getStatus();
+    return {
+      modelReady: false,
+      initError: serviceStatus?.initError ?? null,
+      ...progress,
+      resource,
+      paused: serviceStatus?.paused ?? readConfig().facialRecognitionPaused,
+      pausePending: serviceStatus?.pausePending ?? false,
+      percentage: progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0,
+    };
+  }
+  return { ...facialRecognitionService.getStatus(), resource };
+});
+
+ipcMain.handle("facial-recognition:pause", () => {
+  facialRecognitionService?.pause();
+  try {
+    saveConfigPatch({ facialRecognitionPaused: true });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("facial-recognition:resume", () => {
+  try {
+    saveConfigPatch({ facialRecognitionPaused: false });
+    if (!facialRecognitionService) startFacialRecognitionService();
+    else {
+      facialRecognitionService.resume();
+      facialRecognitionService.start();
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("facial-recognition:rebuild", () => {
+  try {
+    if (!facialRecognitionService) startFacialRecognitionService();
+    facialRecognitionService?.rebuild();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("people:list", () => {
+  try {
+    initDatabase();
+    if (!hasDatabaseTable(PEOPLE_TABLE) || !hasDatabaseTable(FACE_TABLE) || !hasDatabaseTable(FACE_ASSIGNMENT_TABLE)) {
+      return { success: true, data: [] };
+    }
+    const rows = db.prepare(`
+      SELECT
+        p.id,
+        p.name,
+        p.cover_face_id AS coverFaceId,
+        cover.file_id AS coverFileId,
+        cover.box_left AS boxLeft,
+        cover.box_top AS boxTop,
+        cover.box_width AS boxWidth,
+        cover.box_height AS boxHeight,
+        source.width AS imageWidth,
+        source.height AS imageHeight,
+        COUNT(member.id) AS faceCount,
+        COUNT(DISTINCT member.file_id) AS itemCount,
+        GROUP_CONCAT(DISTINCT member.file_id) AS fileIds
+      FROM ${PEOPLE_TABLE} p
+      JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.person_id = p.id
+      JOIN ${FACE_TABLE} member ON member.id = assignment.face_id
+      JOIN ${FACE_TABLE} cover ON cover.id = p.cover_face_id
+      JOIN files source ON source.id = cover.file_id
+      WHERE p.hidden = 0
+      GROUP BY p.id
+      ORDER BY itemCount DESC, faceCount DESC, p.id ASC
+    `).all().map((row) => ({
+      ...row,
+      fileIds: String(row.fileIds ?? "").split(",").map(Number).filter(Number.isInteger),
+    }));
+    return { success: true, data: rows };
+  } catch (error) {
+    console.error("people:list error:", error);
+    return { success: false, error: error.message, data: [] };
+  }
+});
+
 function makeFtsQuery(query) {
   return String(query ?? "")
     .normalize("NFKC")
@@ -4614,6 +4791,7 @@ ipcMain.handle("resource:download", async (_event, requestedId) => {
     if (resourceId === "smart-search") startEmbeddingService();
     if (resourceId === "places") startLocationService();
     if (resourceId === "ocr") startOcrService();
+    if (resourceId === "facial-recognition") startFacialRecognitionService();
     return { ok: true, status };
   } catch (error) {
     return {
@@ -5493,4 +5671,5 @@ app.on("before-quit", async () => {
   embeddingService?.stop();
   locationService?.stop();
   ocrService?.stop();
+  facialRecognitionService?.stop();
 });

@@ -10,6 +10,12 @@ const {
   getLocationGeocoderVersion,
 } = require("./location-schema");
 const { OCR_INDEX_TABLE, OCR_PIPELINE_VERSION } = require("./ocr-schema");
+const {
+  FACE_PIPELINE_VERSION,
+  FACE_SCAN_TABLE,
+  FACE_TABLE,
+  PEOPLE_TABLE,
+} = require("./facial-recognition-schema");
 
 let db;
 
@@ -25,7 +31,7 @@ try {
   db = new Database(workerData.dbPath, { readonly: true, fileMustExist: true });
 
   const total =
-    workerData.type === "embedding" || workerData.type === "ocr"
+    workerData.type === "embedding" || workerData.type === "ocr" || workerData.type === "facial-recognition"
       ? (db
           .prepare("SELECT COUNT(*) AS c FROM files WHERE file_type = 'image'")
           .get()?.c ?? 0)
@@ -43,6 +49,8 @@ try {
     ? "embeddings"
     : workerData.type === "ocr"
       ? OCR_INDEX_TABLE
+      : workerData.type === "facial-recognition"
+        ? FACE_SCAN_TABLE
       : "locations";
   const expectedLocationVersion =
     workerData.locationGeocoderVersion ?? getLocationGeocoderVersion("smart");
@@ -75,11 +83,23 @@ try {
             JOIN ${OCR_INDEX_TABLE} i ON i.file_id = f.id
             WHERE f.file_type = 'image' AND i.model_version = ?
           `).get(OCR_PIPELINE_VERSION)?.c ?? 0)
+        : workerData.type === "facial-recognition" && tableExists(resultTable)
+          ? (db.prepare(`
+              SELECT COUNT(*) AS c FROM ${FACE_SCAN_TABLE}
+              WHERE pipeline_version = ? AND status = 'completed'
+            `).get(FACE_PIPELINE_VERSION)?.c ?? 0)
         : tableExists(resultTable)
         ? (db.prepare(`SELECT COUNT(*) AS c FROM ${resultTable}`).get()?.c ?? 0)
         : 0;
 
-  parentPort.postMessage({ success: true, total, done });
+  const faces = workerData.type === "facial-recognition" && tableExists(FACE_TABLE)
+    ? (db.prepare(`SELECT COUNT(*) AS c FROM ${FACE_TABLE}`).get()?.c ?? 0)
+    : 0;
+  const people = workerData.type === "facial-recognition" && tableExists(PEOPLE_TABLE)
+    ? (db.prepare(`SELECT COUNT(*) AS c FROM ${PEOPLE_TABLE} WHERE hidden = 0`).get()?.c ?? 0)
+    : 0;
+
+  parentPort.postMessage({ success: true, total, done, faces, people });
 } catch (error) {
   parentPort.postMessage({ success: false, error: error.message });
 } finally {

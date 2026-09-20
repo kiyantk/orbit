@@ -58,6 +58,19 @@ const RESOURCE_DEFINITIONS = Object.freeze({
       "PaddleOCR-v6-medium/recognition/inference.yml",
     ],
   }),
+  "facial-recognition": Object.freeze({
+    id: "facial-recognition",
+    version: "v1",
+    downloadUrl:
+      "https://github.com/kiyantk/orbit/releases/download/resources-v1/orbit-facialrecognition-v1.tar.gz",
+    downloadSizeBytes: 236_000_000,
+    downloadSizeLabel: "236 MB",
+    installDirectory: "facial-recognition",
+    expectedFiles: [
+      "InsightFace-AntelopeV2/glintr100.onnx",
+      "InsightFace-AntelopeV2/scrfd_10g_bnkps.onnx",
+    ],
+  }),
 });
 
 const MAX_REDIRECTS = 5;
