@@ -672,6 +672,24 @@ const ActionPanel = ({
     setTextSearchTerm("");
   };
 
+  const resetStandardSearch = () => {
+    const searchIsAlreadyClear =
+      searchBy === DEFAULT_SEARCH.searchBy &&
+      searchTerm === DEFAULT_SEARCH.searchTerm;
+    const hasAppliedSearch =
+      Boolean(String(activeFilters?.searchTerm || "").trim()) ||
+      activeFilters?._smartSearch ||
+      activeFilters?._textSearch;
+
+    resetSearch();
+
+    // When the panel already displays its default state, React has no state
+    // update to trigger the normal search auto-apply effect.
+    if (searchIsAlreadyClear && hasAppliedSearch) {
+      onApply(DEFAULT_SEARCH);
+    }
+  };
+
   // Explore filters also clear sort/search
   const handleExploreDate = (field, value) => {
     explore.handleDateChange(field, value);
@@ -909,7 +927,7 @@ const ActionPanel = ({
                 placeholder="Search..."
               />
               <div className="action-panel-reset">
-                <button onClick={resetSearch}>
+                <button onClick={resetStandardSearch}>
                   <FontAwesomeIcon icon={faUndo} />
                 </button>
               </div>
