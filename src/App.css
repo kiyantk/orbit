@@ -688,6 +688,23 @@ select:disabled {
   stroke-linejoin: round;
 }
 
+.face-focus-overlay {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.face-focus-dim {
+  fill: rgba(0, 0, 0, 0.72);
+  opacity: 0;
+  transition: opacity 750ms ease-out;
+}
+
+.face-focus-flash .face-focus-dim {
+  opacity: 1;
+}
+
 /* Only the temporary fullscreen thumbnail fills the available preview area. */
 .fullscreen-image-container .preview-thumbnail {
   width: 100%;

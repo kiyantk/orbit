@@ -9,7 +9,7 @@ import * as topojson from "topojson-client";
 
 const TOPO_URL = "/countries.final.topo.json";
 
-const MapView = ({ mapViewType, filters, currentSettings, onRevealItem }) => {
+const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountChange }) => {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const clusterLayer = useRef(null);
@@ -147,6 +147,11 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem }) => {
         return;
       }
 
+      onCountChange?.({
+        total: res.totalCount ?? res.points.length,
+        filtered: res.points.length,
+      });
+
       // Guard: map may have been torn down while awaiting
       if (!mapRef.current || !clusterLayer.current) return;
 
@@ -273,7 +278,7 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem }) => {
     return () => {
       cancelled = true;
     };
-  }, [mapReady, filters, currentSettings]);
+  }, [mapReady, filters, currentSettings, onCountChange]);
 
   // ─── Load and cache TopoJSON → GeoJSON ───────────────────────────────────
   const loadGeoJson = useCallback(async () => {

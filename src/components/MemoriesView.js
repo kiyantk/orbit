@@ -87,6 +87,7 @@ const MemoriesView = ({
   onAddMedia,
   onViewMemory,
   memoryLayout,
+  onCountChange,
 }) => {
   const [selectedTab, setSelectedTab] = useState("Years");
   const [years, setYears] = useState([]);
@@ -96,6 +97,25 @@ const MemoriesView = ({
   const [loading, setLoading] = useState(true);
   const [customMemories, setCustomMemories] = useState([]);
   const [onThisDay, setOnThisDay] = useState([]);
+
+  const currentMemoryCount =
+    selectedTab === "All"
+      ? customMemories.length + years.length + months.length + trips.length
+      : selectedTab === "Years"
+        ? years.length
+        : selectedTab === "Months"
+          ? months.length
+          : selectedTab === "Vacations"
+            ? vacations.length
+            : selectedTab === "Trips"
+              ? trips.length
+              : selectedTab === "On This Day"
+                ? onThisDay.length
+                : customMemories.length;
+
+  useEffect(() => {
+    onCountChange?.({ total: currentMemoryCount, filtered: currentMemoryCount });
+  }, [currentMemoryCount, onCountChange]);
 
   // All drag state lives in a single ref — no stale closure issues
   const drag = useRef({ active: false, fromIndex: null, toIndex: null });

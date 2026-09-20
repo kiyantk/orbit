@@ -234,7 +234,7 @@ const PlaceCard = React.memo(
 // ─── PlacesView ───────────────────────────────────────────────────────────────
 const TABS = ["Countries", "Regions", "Cities"];
 
-const PlacesView = ({ currentSettings, onViewPlace }) => {
+const PlacesView = ({ currentSettings, onViewPlace, onCountChange }) => {
   const [selectedTab, setSelectedTab] = useState("Countries");
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -417,6 +417,10 @@ const PlacesView = ({ currentSettings, onViewPlace }) => {
     const query = normalizeSearchText(searchQuery.trim());
     return items.filter((item) => matchesPlaceSearch(item, query));
   }, [items, searchQuery]);
+
+  useEffect(() => {
+    onCountChange?.({ total: items.length, filtered: filteredItems.length });
+  }, [items.length, filteredItems.length, onCountChange]);
 
   const makeCellRenderer = useCallback(
     (columnCount, cellWidth) =>

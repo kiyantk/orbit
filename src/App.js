@@ -45,6 +45,7 @@ const App = () => {
   const [actionPanelType, setActionPanelType] = useState(null);
   const [filters, setFilters] = useState(null);
   const [filteredCount, setFilteredCount] = useState(null);
+  const [viewCount, setViewCount] = useState(null);
   const [shuffleFilters, setShuffleFilters] = useState({});
   const [mapFilters, setMapFilters] = useState({});
   const [shuffleSettings, setShuffleSettings] = useState({
@@ -248,6 +249,7 @@ const App = () => {
 
   useEffect(() => {
     setActionPanelType(null);
+    setViewCount(null);
   }, [activeView]);
 
   useEffect(() => {
@@ -417,7 +419,13 @@ const App = () => {
             />
           )}
           {activeView === "map" && (
-            <MapView mapViewType={mapViewType} filters={mapFilters} currentSettings={settings} onRevealItem={revealItemInExplorer} />
+            <MapView
+              mapViewType={mapViewType}
+              filters={mapFilters}
+              currentSettings={settings}
+              onRevealItem={revealItemInExplorer}
+              onCountChange={setViewCount}
+            />
           )}
           {activeView === "tags" && (
             <TagsView
@@ -438,6 +446,7 @@ const App = () => {
               }}
               showPopup={showTagPopup}
               setShowPopup={setShowTagPopup}
+              onCountChange={setViewCount}
             />
           )}
           {activeView === "shuffle" && (
@@ -491,6 +500,7 @@ const App = () => {
                 });
                 setActiveView("explore");
               }}
+              onCountChange={setViewCount}
             />
           )}
           {activeView === "places" && (
@@ -501,15 +511,20 @@ const App = () => {
                 setExplorerScroll(0);
                 setActiveView("explore");
               }}
+              onCountChange={setViewCount}
             />
           )}
           {activeView === "people" && (
             <PeopleView
-              onViewPerson={(ids) => {
-                setFilters({ ids });
+              onViewPerson={(person) => {
+                setFilters({
+                  ids: person.fileIds,
+                  _facePersonId: person.id,
+                });
                 setExplorerScroll(0);
                 setActiveView("explore");
               }}
+              onCountChange={setViewCount}
             />
           )}
           {activeView === "explore" && (
@@ -564,6 +579,7 @@ const App = () => {
                         ? (filters.searchTerm ?? "")
                         : ""
                     }
+                    facePersonId={filters?._facePersonId ?? null}
                   />
                 ) : (
                   <div className="preview-center-text p-4 text-gray-400">
@@ -600,6 +616,7 @@ const App = () => {
           explorerScale={explorerScale}
           filteredCount={filteredCount}
           activeView={activeView}
+          viewCount={viewCount}
         />
       </div>
     </div>

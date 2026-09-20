@@ -1305,6 +1305,21 @@ ipcMain.handle(
         )
         .all(...params);
 
+      const { sql: totalSql, params: totalParams } = buildWhereClause({}, {
+        allowUndated: true,
+        hiddenFolders: settings.hiddenFolders,
+      });
+      const totalWhereSQL = [
+        "latitude IS NOT NULL",
+        "longitude IS NOT NULL",
+        totalSql.replace(/^WHERE\s*/, ""),
+      ]
+        .filter(Boolean)
+        .join(" AND ");
+      const totalCount = db
+        .prepare(`SELECT COUNT(*) AS count FROM files WHERE ${totalWhereSQL}`)
+        .get(...totalParams).count;
+
       const points = [];
       const heat = [];
       const countryCounts = {};
@@ -1371,6 +1386,7 @@ ipcMain.handle(
         lines: lineSegments,
         countryCounts,
         countryBounds,
+        totalCount,
       };
     } catch (err) {
       console.error("fetch-map-data error:", err);
@@ -4626,6 +4642,39 @@ ipcMain.handle("people:list", () => {
   } catch (error) {
     console.error("people:list error:", error);
     return { success: false, error: error.message, data: [] };
+  }
+});
+
+ipcMain.handle("people:get-face-metrics", (_event, { fileId, personId } = {}) => {
+  try {
+    initDatabase();
+    const parsedFileId = Number(fileId);
+    const parsedPersonId = Number(personId);
+    if (!Number.isInteger(parsedFileId) || !Number.isInteger(parsedPersonId)) {
+      return { success: true, data: null };
+    }
+    if (!hasDatabaseTable(FACE_TABLE) || !hasDatabaseTable(FACE_ASSIGNMENT_TABLE)) {
+      return { success: true, data: null };
+    }
+
+    const data = db.prepare(`
+      SELECT
+        face.detector_confidence AS confidence,
+        face.recognition_quality AS quality,
+        face.box_left AS boxLeft,
+        face.box_top AS boxTop,
+        face.box_width AS boxWidth,
+        face.box_height AS boxHeight
+      FROM ${FACE_TABLE} face
+      JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = face.id
+      WHERE face.file_id = ? AND assignment.person_id = ?
+      ORDER BY face.recognition_quality DESC, face.detector_confidence DESC, face.id ASC
+      LIMIT 1
+    `).get(parsedFileId, parsedPersonId) ?? null;
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:get-face-metrics error:", error);
+    return { success: false, error: error.message, data: null };
   }
 });
 

@@ -92,6 +92,11 @@ function safePlay(video) {
   }
 }
 
+function formatFaceMetric(score) {
+  const value = Number(score);
+  return Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : null;
+}
+
 function textSearchTerms(value) {
   return String(value ?? "").normalize("NFKC").toLocaleLowerCase()
     .match(/[\p{L}\p{N}_]+/gu) ?? [];
@@ -228,6 +233,7 @@ export default function PreviewPanel({
   smartScore,
   textMatch,
   textSearchTerm,
+  facePersonId,
 }) {
   const videoRefNormal = useRef(null);
   const trackRefNormal = useRef(null);
@@ -238,6 +244,7 @@ export default function PreviewPanel({
   const fullscreenImageContainerRef = useRef(null);
   const lastMousePos = useRef(null);
   const ocrMaskId = useRef(`ocr-focus-mask-${Math.random().toString(36).slice(2)}`).current;
+  const faceMaskId = useRef(`face-focus-mask-${Math.random().toString(36).slice(2)}`).current;
   const previousMediaId = useRef(null);
   const previousPlaceNameDisplay = useRef(
     currentSettings?.placesNameDisplay ?? "english",
@@ -261,6 +268,8 @@ export default function PreviewPanel({
   const [ocrBoxes, setOcrBoxes] = useState([]);
   const [ocrFocusFlash, setOcrFocusFlash] = useState(false);
   const [ocrOverlayLayout, setOcrOverlayLayout] = useState(null);
+  const [faceMetrics, setFaceMetrics] = useState(null);
+  const [faceFocusFlash, setFaceFocusFlash] = useState(false);
 
   const currentVideoRef = isFullscreen ? videoRefFullscreen : videoRefNormal;
   const currentTrackRef = isFullscreen ? trackRefFullscreen : trackRefNormal;
@@ -464,6 +473,55 @@ export default function PreviewPanel({
   }, [item?.id, textSearchTerm, isVideo]);
 
   useEffect(() => {
+    let cancelled = false;
+    if (!item?.id || !facePersonId) {
+      setFaceMetrics(null);
+      return undefined;
+    }
+
+    window.electron.ipcRenderer
+      .invoke("people:get-face-metrics", { fileId: item.id, personId: facePersonId })
+      .then((result) => {
+        if (!cancelled) {
+          setFaceMetrics(result?.success && result.data
+            ? { ...result.data, fileId: item.id, personId: facePersonId }
+            : null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setFaceMetrics(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [item?.id, facePersonId]);
+
+  const displayedFaceMetrics =
+    faceMetrics?.fileId === item?.id && faceMetrics.personId === facePersonId
+      ? faceMetrics
+      : null;
+  const faceBox = displayedFaceMetrics &&
+    [
+      displayedFaceMetrics.boxLeft,
+      displayedFaceMetrics.boxTop,
+      displayedFaceMetrics.boxWidth,
+      displayedFaceMetrics.boxHeight,
+    ].every((value) => Number.isFinite(Number(value))) &&
+    Number(displayedFaceMetrics.boxWidth) > 0 &&
+    Number(displayedFaceMetrics.boxHeight) > 0
+    ? {
+      left: Number(displayedFaceMetrics.boxLeft),
+      top: Number(displayedFaceMetrics.boxTop),
+      width: Number(displayedFaceMetrics.boxWidth),
+      height: Number(displayedFaceMetrics.boxHeight),
+    }
+    : null;
+  const faceFocusKey = faceBox
+    ? `${item.id}:${facePersonId}:${faceBox.left}:${faceBox.top}:${faceBox.width}:${faceBox.height}`
+    : "";
+
+  useEffect(() => {
     if (!isFullscreen || isVideo || isFullscreenMediaLoading || !ocrFocusKey) {
       setOcrFocusFlash(false);
       return undefined;
@@ -474,11 +532,21 @@ export default function PreviewPanel({
   }, [isFullscreen, isVideo, isFullscreenMediaLoading, ocrFocusKey]);
 
   useEffect(() => {
+    if (!isFullscreen || isVideo || isFullscreenMediaLoading || !faceFocusKey) {
+      setFaceFocusFlash(false);
+      return undefined;
+    }
+    setFaceFocusFlash(true);
+    const timer = setTimeout(() => setFaceFocusFlash(false), 1_100);
+    return () => clearTimeout(timer);
+  }, [isFullscreen, isVideo, isFullscreenMediaLoading, faceFocusKey]);
+
+  useEffect(() => {
     if (
       !isFullscreen ||
       isVideo ||
       isFullscreenMediaLoading ||
-      !ocrFocusKey
+      (!ocrFocusKey && !faceFocusKey)
     ) return undefined;
     updateOcrOverlayLayout();
     let frame = null;
@@ -491,7 +559,7 @@ export default function PreviewPanel({
       if (frame != null) cancelAnimationFrame(frame);
       window.removeEventListener("resize", handleResize);
     };
-  }, [isFullscreen, isVideo, isFullscreenMediaLoading, ocrFocusKey, updateOcrOverlayLayout]);
+  }, [isFullscreen, isVideo, isFullscreenMediaLoading, ocrFocusKey, faceFocusKey, updateOcrOverlayLayout]);
 
   // ── Keyboard ───────────────────────────────────────────────────────────────
 
@@ -931,6 +999,20 @@ export default function PreviewPanel({
             title="Matched against text detected in this image"
           />
         )}
+        {displayedFaceMetrics && (
+          <>
+            <MetaRow
+              label="Face Confidence"
+              value={formatFaceMetric(displayedFaceMetrics.confidence)}
+              title={`Raw face-detection confidence: ${Number(displayedFaceMetrics.confidence).toFixed(4)}`}
+            />
+            <MetaRow
+              label="Face Quality"
+              value={formatFaceMetric(displayedFaceMetrics.quality)}
+              title={`Raw face-recognition quality: ${Number(displayedFaceMetrics.quality).toFixed(4)}`}
+            />
+          </>
+        )}
         <MetaRow
           label="ID"
           value={item.id ? item.media_id : null}
@@ -1089,6 +1171,39 @@ export default function PreviewPanel({
                         points={box.points.map((point) => point.join(",")).join(" ")}
                       />
                     ))}
+                  </svg>
+                )}
+                {!isFullscreenMediaLoading && ocrOverlayLayout && faceBox && (
+                  <svg
+                    className={`face-focus-overlay ${faceFocusFlash ? "face-focus-flash" : ""}`}
+                    viewBox="0 0 1 1"
+                    preserveAspectRatio="none"
+                    aria-hidden="true"
+                    style={{
+                      left: `${ocrOverlayLayout.left + offset.x + ((1 - zoom) * ocrOverlayLayout.width) / 2}px`,
+                      top: `${ocrOverlayLayout.top + offset.y + ((1 - zoom) * ocrOverlayLayout.height) / 2}px`,
+                      width: `${ocrOverlayLayout.width * zoom}px`,
+                      height: `${ocrOverlayLayout.height * zoom}px`,
+                    }}
+                  >
+                    <defs>
+                      <mask id={faceMaskId} maskUnits="userSpaceOnUse" x="0" y="0" width="1" height="1">
+                        <rect width="1" height="1" fill="white" />
+                        <rect
+                          x={faceBox.left}
+                          y={faceBox.top}
+                          width={faceBox.width}
+                          height={faceBox.height}
+                          fill="black"
+                        />
+                      </mask>
+                    </defs>
+                    <rect
+                      className="face-focus-dim"
+                      width="1"
+                      height="1"
+                      mask={`url(#${faceMaskId})`}
+                    />
                   </svg>
                 )}
               </div>

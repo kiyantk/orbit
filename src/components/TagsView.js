@@ -12,7 +12,7 @@ import TagPill from "./TagPill";
 import Popup from "./Popup";
 import ConfirmPopup from "./ConfirmPopup";
 
-const TagsView = ({ onViewTag, onAddMedia, showPopup, setShowPopup }) => {
+const TagsView = ({ onViewTag, onAddMedia, showPopup, setShowPopup, onCountChange }) => {
   const [tags, setTags] = useState([]);
   const [editingTag, setEditingTag] = useState(null); // track if editing
   const [tagData, setTagData] = useState({
@@ -30,6 +30,10 @@ const TagsView = ({ onViewTag, onAddMedia, showPopup, setShowPopup }) => {
   useEffect(() => {
     window.electron.ipcRenderer.invoke("tags:get-all").then(setTags);
   }, []);
+
+  useEffect(() => {
+    onCountChange?.({ total: tags.length, filtered: tags.length });
+  }, [tags.length, onCountChange]);
 
   useEffect(() => {
     if (!showPopup) return;

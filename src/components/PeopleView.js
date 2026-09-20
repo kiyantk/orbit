@@ -51,7 +51,7 @@ function FaceAvatar({ person, label }) {
   );
 }
 
-const PeopleView = ({ onViewPerson }) => {
+const PeopleView = ({ onViewPerson, onCountChange }) => {
   const [people, setPeople] = useState([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -101,11 +101,20 @@ const PeopleView = ({ onViewPerson }) => {
     return () => observer.disconnect();
   }, []);
 
+  const peopleWithLabels = useMemo(() => people.map((person, index) => ({
+    ...person,
+    displayName: person.name || `Person ${index + 1}`,
+  })), [people]);
+
   const filteredPeople = useMemo(() => {
     const search = normaliseText(query.trim());
-    if (!search) return people;
-    return people.filter((person, index) => normaliseText(person.name || `Person ${index + 1}`).includes(search));
-  }, [people, query]);
+    if (!search) return peopleWithLabels;
+    return peopleWithLabels.filter((person) => normaliseText(person.displayName).includes(search));
+  }, [peopleWithLabels, query]);
+
+  useEffect(() => {
+    onCountChange?.({ total: people.length, filtered: filteredPeople.length });
+  }, [people.length, filteredPeople.length, onCountChange]);
 
   const columns = columnCountFor(size.width || 0);
   const cellWidth = cellWidthFor(size.width || 0, columns);
@@ -114,7 +123,7 @@ const PeopleView = ({ onViewPerson }) => {
     const index = rowIndex * columns + columnIndex;
     const person = filteredPeople[index];
     if (!person) return null;
-    const label = person.name || `Person ${index + 1}`;
+    const label = person.displayName;
     return (
       <button
         key={key}
@@ -127,7 +136,7 @@ const PeopleView = ({ onViewPerson }) => {
           width: cellWidth,
           height: CARD_HEIGHT,
         }}
-        onClick={() => person.fileIds?.length && onViewPerson(person.fileIds)}
+        onClick={() => person.fileIds?.length && onViewPerson(person)}
       >
         <FaceAvatar person={person} label={label} />
         <span className="person-card-name">{label}</span>
