@@ -36,6 +36,7 @@ const TABS = [
   "Stats",
   "Memories",
   "Places",
+  "People",
   "Storage",
   "Controls",
   "App",
@@ -49,6 +50,7 @@ const TAB_ICONS = {
   Stats: faChartSimple,
   Memories: faPanorama,
   Places: faLocationDot,
+  People: faUser,
   Storage: faHardDrive,
   Controls: faKeyboard,
   App: faToolbox,
@@ -1584,6 +1586,45 @@ const SettingsView = ({
                 <span className="settings-hint">
                   Hides items with altitude higher than 9000 meters.
                 </span>
+              </SettingsRow>
+            </div>
+          )}
+
+          {selectedTab === "People" && (
+            <div>
+              <SettingsRow>
+                <div className="slider-wrapper">
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={!!settings.showHiddenPeople}
+                      onChange={handleCheckbox("showHiddenPeople")}
+                    />
+                    <div className="slider round"></div>
+                  </label>
+                </div>
+                <span>Show hidden people</span>
+              </SettingsRow>
+
+              <SettingsRow>
+                <span>Minimum photos:</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  step={1}
+                  value={settings.peopleMinPhotos ?? 1}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    updateSettings({
+                      peopleMinPhotos: Number.isFinite(value)
+                        ? Math.min(1000, Math.max(1, Math.floor(value)))
+                        : 1,
+                    });
+                  }}
+                  className="settings-content-input"
+                  style={{ width: 100 }}
+                />
               </SettingsRow>
             </div>
           )}

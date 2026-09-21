@@ -516,9 +516,9 @@ const App = () => {
           )}
           {activeView === "people" && (
             <PeopleView
+              currentSettings={settings}
               onViewPerson={(person) => {
                 setFilters({
-                  ids: person.fileIds,
                   _facePersonId: person.id,
                 });
                 setExplorerScroll(0);

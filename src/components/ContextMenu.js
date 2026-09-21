@@ -12,9 +12,12 @@ const ContextMenu = ({
   revealFromContextMenu,
   onRemoveItem,
   onFindSimilar,
+  activePersonId,
+  onPersonAction,
 }) => {
   const menuRef = useRef(null);
   const [showTags, setShowTags] = useState(false);
+  const [showPerson, setShowPerson] = useState(false);
   const [tags, setTags] = useState([]);
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [hasEmbedding, setHasEmbedding] = useState(false);
@@ -43,7 +46,7 @@ const ContextMenu = ({
     updatePosition();
     window.addEventListener("resize", updatePosition);
     return () => window.removeEventListener("resize", updatePosition);
-  }, [x, y, showTags]);
+  }, [x, y, showTags, showPerson]);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -117,7 +120,6 @@ const ContextMenu = ({
         position: "fixed",
         top: position.top,
         left: position.left,
-        height: "200px",
         backgroundColor: "#1c1a22",
         color: "white",
         border: "1px solid #3a3645",
@@ -127,7 +129,7 @@ const ContextMenu = ({
         display: "flex",
         userSelect: "none",
       }}
-      onMouseLeave={() => setShowTags(false)}
+      onMouseLeave={() => { setShowTags(false); setShowPerson(false); }}
     >
       {/* Main context menu */}
       <div
@@ -146,7 +148,7 @@ const ContextMenu = ({
             textAlign: "left",
           }}
           className="context-menu-item"
-          onMouseEnter={() => setShowTags(false)}
+          onMouseEnter={() => { setShowTags(false); setShowPerson(false); }}
           onClick={() => revealFromCtx()}
         >
           Reveal in all
@@ -160,7 +162,7 @@ const ContextMenu = ({
             opacity: hasEmbedding ? 1 : 0.4,
           }}
           className={hasEmbedding ? "context-menu-item" : ""}
-          onMouseEnter={() => setShowTags(false)}
+          onMouseEnter={() => { setShowTags(false); setShowPerson(false); }}
           onClick={() => {
             if (!hasEmbedding) return;
             onFindSimilar(item);
@@ -178,7 +180,7 @@ const ContextMenu = ({
             backgroundColor: showTags ? "#2d2a35" : "transparent",
           }}
           className="context-menu-item"
-          onMouseEnter={() => setShowTags(true)}
+          onMouseEnter={() => { setShowTags(true); setShowPerson(false); }}
         >
           Add Tag{" "}
           <FontAwesomeIcon style={{ float: "right" }} icon={faArrowRight} />
@@ -189,10 +191,23 @@ const ContextMenu = ({
             cursor: "pointer",
             whiteSpace: "nowrap",
             textAlign: "left",
+            backgroundColor: showPerson ? "#2d2a35" : "transparent",
+          }}
+          className="context-menu-item"
+          onMouseEnter={() => { setShowPerson(true); setShowTags(false); }}
+        >
+          Person <FontAwesomeIcon style={{ float: "right" }} icon={faArrowRight} />
+        </div>
+        <div
+          style={{
+            padding: "6px 12px",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            textAlign: "left",
             color: "#ff6b6b",
           }}
           className="context-menu-item"
-          onMouseEnter={() => setShowTags(false)}
+          onMouseEnter={() => { setShowTags(false); setShowPerson(false); }}
           onClick={() => setShowRemoveConfirm(true)}
         >
           Remove
@@ -203,6 +218,7 @@ const ContextMenu = ({
       {/* Tag submenu */}
       {showTags && (
         <div
+          className="context-menu-submenu"
           style={{
             minWidth: 200,
             maxHeight: 200,
@@ -242,6 +258,40 @@ const ContextMenu = ({
               </label>
             );
           })}
+        </div>
+      )}
+
+      {showPerson && (
+        <div
+          className="context-menu-submenu"
+          style={{
+            minWidth: 190,
+            backgroundColor: "#2d2a35",
+            borderLeft: "1px solid #3a3645",
+            padding: "6px 0",
+          }}
+        >
+          <div className="context-menu-item" style={{ padding: "6px 12px" }} onClick={() => onPersonAction("add-to-person", item)}>
+            Add to person
+          </div>
+          {activePersonId && (
+            <>
+              <div className="context-menu-item" style={{ padding: "6px 12px" }} onClick={() => onPersonAction("separate", item)}>
+                Separate from person
+              </div>
+              <div className="context-menu-item" style={{ padding: "6px 12px" }} onClick={() => onPersonAction("set-avatar", item)}>
+                Set as avatar
+              </div>
+              <div className="context-menu-item" style={{ padding: "6px 12px" }} onClick={() => onPersonAction("not-same-person", item)}>
+                Not the same person
+              </div>
+            </>
+          )}
+          {activePersonId && (
+            <div className="context-menu-item" style={{ padding: "6px 12px", color: "#ff9a9a" }} onClick={() => onPersonAction("hide-not-face", item)}>
+              Hide / Not a face
+            </div>
+          )}
         </div>
       )}
 

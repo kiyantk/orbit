@@ -14,3 +14,88 @@
     width: 100% !important;
     overflow: hidden !important;
 }
+
+.person-picker-description {
+  margin: 0 0 12px;
+  color: #c5becb;
+}
+
+.person-face-picker {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #111015;
+}
+
+.person-face-picker img {
+  display: block;
+  width: 100%;
+}
+
+.person-face-picker-box {
+  position: absolute;
+  min-width: 18px;
+  min-height: 18px;
+  border: 2px solid #bd92df;
+  background: rgba(189, 146, 223, 0.16);
+  cursor: pointer;
+}
+
+.person-face-picker-box:hover,
+.person-face-picker-box:focus-visible {
+  outline: 0;
+  border-color: #f1d8ff;
+  background: rgba(224, 193, 250, 0.34);
+}
+
+.person-face-picker-box span {
+  display: inline-block;
+  padding: 2px 4px;
+  color: #fff;
+  background: #5f4275;
+  font-size: 11px;
+}
+
+.person-face-picker-busy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 13, 19, 0.65);
+}
+
+.person-target-list {
+  max-height: 320px;
+  margin-top: 12px;
+  overflow-y: auto;
+  border: 1px solid #3a3645;
+  border-radius: 6px;
+}
+
+.person-target-list button,
+.person-target-list span {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  color: #f1ecf3;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+
+.person-target-list button {
+  cursor: pointer;
+}
+
+.person-target-list button:hover,
+.person-target-list button:focus-visible {
+  outline: 0;
+  background: #2d2a35;
+}
+
+.person-target-list span {
+  color: #a9a1b0;
+}

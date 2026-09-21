@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Grid } from "react-virtualized";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faArrowsRotate, faMagnifyingGlass, faUsers } from "@fortawesome/free-solid-svg-icons";
+import { faArrowsRotate, faEyeSlash, faMagnifyingGlass, faUsers } from "@fortawesome/free-solid-svg-icons";
+import ConfirmPopup from "./ConfirmPopup";
+import PeopleContextMenu from "./PeopleContextMenu";
+import Popup from "./Popup";
 import "react-virtualized/styles.css";
 
 const CARD_MIN_WIDTH = 156;
@@ -70,7 +73,12 @@ function FaceAvatar({ person, label }) {
   );
 }
 
-const PeopleView = ({ onViewPerson, onCountChange }) => {
+function normalizeMinimumPhotos(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(1000, Math.max(1, Math.floor(parsed))) : 1;
+}
+
+const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
   const [people, setPeople] = useState([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -91,6 +99,11 @@ const PeopleView = ({ onViewPerson, onCountChange }) => {
   const [bulkConfirmation, setBulkConfirmation] = useState(null);
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkError, setBulkError] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [renamePerson, setRenamePerson] = useState(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [splitPerson, setSplitPerson] = useState(null);
+  const [personActionSaving, setPersonActionSaving] = useState(false);
   const containerRef = useRef(null);
   const reviewImageDragRef = useRef(null);
   const reviewImageElementRef = useRef(null);
@@ -145,11 +158,16 @@ const PeopleView = ({ onViewPerson, onCountChange }) => {
     displayName: person.name || `Person ${index + 1}`,
   })), [people]);
 
+  const minimumPhotos = normalizeMinimumPhotos(currentSettings?.peopleMinPhotos);
+  const visiblePeople = useMemo(() => peopleWithLabels.filter((person) => (
+    (currentSettings?.showHiddenPeople || !person.hidden) && Number(person.itemCount) >= minimumPhotos
+  )), [currentSettings?.showHiddenPeople, minimumPhotos, peopleWithLabels]);
+
   const filteredPeople = useMemo(() => {
     const search = normaliseText(query.trim());
-    if (!search) return peopleWithLabels;
-    return peopleWithLabels.filter((person) => normaliseText(person.displayName).includes(search));
-  }, [peopleWithLabels, query]);
+    if (!search) return visiblePeople;
+    return visiblePeople.filter((person) => normaliseText(person.displayName).includes(search));
+  }, [query, visiblePeople]);
 
   const suggestedPeople = useMemo(() => {
     if (!suggestion) return null;
@@ -160,8 +178,8 @@ const PeopleView = ({ onViewPerson, onCountChange }) => {
   }, [peopleWithLabels, suggestion]);
 
   useEffect(() => {
-    onCountChange?.({ total: people.length, filtered: filteredPeople.length });
-  }, [people.length, filteredPeople.length, onCountChange]);
+    onCountChange?.({ total: visiblePeople.length, filtered: filteredPeople.length });
+  }, [visiblePeople.length, filteredPeople.length, onCountChange]);
 
   const bulkTarget = useMemo(() => peopleWithLabels.find((person) => person.id === bulkTargetId) ?? null, [bulkTargetId, peopleWithLabels]);
 
@@ -232,6 +250,53 @@ const PeopleView = ({ onViewPerson, onCountChange }) => {
     }
   }, [bulkConfirmation, cancelBulkMode, load]);
 
+  const managePerson = useCallback(async (action, person, value = null) => {
+    setPersonActionSaving(true);
+    setRegroupError(null);
+    try {
+      const result = await window.electron.ipcRenderer.invoke("people:action", {
+        action,
+        personId: person.id,
+        value,
+      });
+      if (!result?.success) throw new Error(result?.error || "Unable to update this person.");
+      await load();
+      return true;
+    } catch (error) {
+      setRegroupError(error.message || "Unable to update this person.");
+      return false;
+    } finally {
+      setPersonActionSaving(false);
+    }
+  }, [load]);
+
+  const openRenamePerson = useCallback((person) => {
+    setContextMenu(null);
+    setRenamePerson(person);
+    setRenameValue(person.name || "");
+  }, []);
+
+  const saveRenamePerson = useCallback(async () => {
+    if (!renamePerson || !renameValue.trim()) return;
+    if (await managePerson("rename", renamePerson, renameValue)) setRenamePerson(null);
+  }, [managePerson, renamePerson, renameValue]);
+
+  const openSplitPerson = useCallback((person) => {
+    setContextMenu(null);
+    setSplitPerson(person);
+  }, []);
+
+  const confirmSplitPerson = useCallback(async () => {
+    if (!splitPerson || personActionSaving) return;
+    if (await managePerson("split", splitPerson)) setSplitPerson(null);
+  }, [managePerson, personActionSaving, splitPerson]);
+
+  const togglePersonHidden = useCallback(async (person) => {
+    setContextMenu(null);
+    await managePerson(person.hidden ? "unhide" : "hide", person);
+  }, [managePerson]);
+
+  const unavailable = resource?.state === "download-required" || resource?.state === "download-failed";
   const columns = columnCountFor(size.width || 0);
   const cellWidth = cellWidthFor(size.width || 0, columns);
   const rows = Math.ceil(filteredPeople.length / columns);
@@ -244,7 +309,7 @@ const PeopleView = ({ onViewPerson, onCountChange }) => {
       <button
         key={key}
         type="button"
-        className={`person-card${bulkMode === "merge-select" && person.id === bulkTargetId ? " person-card--bulk-target" : ""}${bulkPersonIds.includes(person.id) ? " person-card--bulk-selected" : ""}`}
+        className={`person-card${person.hidden ? " person-card--hidden" : ""}${bulkMode === "merge-select" && person.id === bulkTargetId ? " person-card--bulk-target" : ""}${bulkPersonIds.includes(person.id) ? " person-card--bulk-selected" : ""}`}
         style={{
           ...style,
           left: columnIndex * (cellWidth + GRID_GAP),
@@ -253,17 +318,22 @@ const PeopleView = ({ onViewPerson, onCountChange }) => {
           height: CARD_HEIGHT,
         }}
         onClick={() => handlePersonClick(person)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          if (!bulkMode) setContextMenu({ x: event.clientX, y: event.clientY, person });
+        }}
       >
         <FaceAvatar person={person} label={label} />
-        <span className="person-card-name">{label}</span>
+        <span className="person-card-name">
+          {person.hidden ? <FontAwesomeIcon icon={faEyeSlash} aria-hidden="true" /> : null}
+          {label}
+        </span>
         <span className="person-card-count">
           {person.itemCount === 1 ? "1 item" : `${Number(person.itemCount).toLocaleString()} items`}
         </span>
       </button>
     );
   }, [bulkMode, bulkPersonIds, bulkTargetId, cellWidth, columns, filteredPeople, handlePersonClick]);
-
-  const unavailable = resource?.state === "download-required" || resource?.state === "download-failed";
 
   const regroupPeople = useCallback(async () => {
     setRegrouping(true);
@@ -283,7 +353,7 @@ const PeopleView = ({ onViewPerson, onCountChange }) => {
     setReviewLoading(true);
     setReviewError(null);
     try {
-      const result = await window.electron.ipcRenderer.invoke("people:next-suggestion");
+      const result = await window.electron.ipcRenderer.invoke("people:next-suggestion", { minimumPhotos });
       if (!result?.success) throw new Error(result?.error || "Unable to find a match to review.");
       setSuggestion(result.data ?? null);
     } catch (error) {
@@ -292,7 +362,7 @@ const PeopleView = ({ onViewPerson, onCountChange }) => {
     } finally {
       setReviewLoading(false);
     }
-  }, []);
+  }, [minimumPhotos]);
 
   const openReview = useCallback(async () => {
     setReviewOpen(true);
@@ -478,6 +548,18 @@ const PeopleView = ({ onViewPerson, onCountChange }) => {
           />
         )}
       </div>
+      {contextMenu && (
+        <PeopleContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          person={contextMenu.person}
+          disabled={unavailable || personActionSaving}
+          onClose={() => setContextMenu(null)}
+          onRename={openRenamePerson}
+          onSplit={openSplitPerson}
+          onToggleHidden={togglePersonHidden}
+        />
+      )}
       {bulkConfirmation && (
         <div className="people-review-overlay" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget && !bulkSaving) setBulkConfirmation(null);
@@ -603,6 +685,39 @@ const PeopleView = ({ onViewPerson, onCountChange }) => {
             </div>
           </section>
         </div>
+      )}
+      {renamePerson && (
+        <Popup
+          title="Rename person"
+          width={440}
+          actions={[
+            { label: "Cancel", kind: "secondary", onClick: () => setRenamePerson(null), disabled: personActionSaving },
+            { label: personActionSaving ? "Saving..." : "Save", onClick: saveRenamePerson, disabled: personActionSaving || !renameValue.trim() },
+          ]}
+        >
+          <input
+            className="settings-content-input"
+            type="text"
+            value={renameValue}
+            maxLength={128}
+            autoFocus
+            onChange={(event) => setRenameValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") saveRenamePerson();
+            }}
+            aria-label="Person name"
+          />
+        </Popup>
+      )}
+      {splitPerson && (
+        <ConfirmPopup
+          title="Split person?"
+          message={`This will create a separate person for each of ${splitPerson.faceCount} faces.`}
+          subMessage="This keeps the faces separate when people are regrouped."
+          confirmLabel={personActionSaving ? "Splitting..." : "Split person"}
+          onCancel={() => setSplitPerson(null)}
+          onConfirm={confirmSplitPerson}
+        />
       )}
     </div>
   );

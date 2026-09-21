@@ -467,6 +467,8 @@ const defaultConfig = {
   placesThumbnails: "random",
   placesSubtitles: "count",
   placesMinCount: 1,
+  showHiddenPeople: false,
+  peopleMinPhotos: 1,
   placesExcludeFlights: false,
   placesSelectionMode: "smart",
   placesNameDisplay: "english",
@@ -1080,6 +1082,23 @@ function buildWhereClause(rawFilters = {}, options = {}) {
   // shared filters
   if (Array.isArray(filters.ids) && filters.ids.length) {
     clauses.push(applyIdsFilter(db, filters.ids));
+  }
+
+  const facePersonId = Number(filters._facePersonId);
+  if (Number.isInteger(facePersonId)) {
+    if (hasDatabaseTable(FACE_TABLE) && hasDatabaseTable(FACE_ASSIGNMENT_TABLE)) {
+      clauses.push(`
+        id IN (
+          SELECT DISTINCT face.file_id
+          FROM ${FACE_TABLE} face
+          JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = face.id
+          WHERE assignment.person_id = ?
+        )
+      `);
+      params.push(facePersonId);
+    } else {
+      clauses.push("1 = 0");
+    }
   }
 
   if (filters.dateFrom) {
@@ -4698,31 +4717,44 @@ ipcMain.handle("people:recluster", async () => {
   }
 });
 
-ipcMain.handle("people:next-suggestion", () => {
+ipcMain.handle("people:next-suggestion", (_event, { minimumPhotos } = {}) => {
   try {
     initDatabase();
-    if (![PEOPLE_TABLE, FACE_ASSIGNMENT_TABLE, MANUAL_PERSON_FACE_TABLE, PERSON_EXCLUSION_TABLE, FACE_SUGGESTION_TABLE].every(hasDatabaseTable)) {
+    if (![PEOPLE_TABLE, FACE_TABLE, FACE_ASSIGNMENT_TABLE, MANUAL_PERSON_FACE_TABLE, PERSON_EXCLUSION_TABLE, FACE_SUGGESTION_TABLE].every(hasDatabaseTable)) {
       return { success: true, data: null };
     }
+    const parsedMinimumPhotos = Number(minimumPhotos);
+    const reviewMinimumPhotos = Number.isFinite(parsedMinimumPhotos)
+      ? Math.min(1000, Math.max(1, Math.floor(parsedMinimumPhotos)))
+      : 1;
     const candidates = db.prepare(`
-      WITH pairs AS (
+      WITH person_counts AS (
+        SELECT assignment.person_id AS personId, COUNT(DISTINCT face.file_id) AS photoCount
+        FROM ${FACE_ASSIGNMENT_TABLE} assignment
+        JOIN ${FACE_TABLE} face ON face.id = assignment.face_id
+        GROUP BY assignment.person_id
+      ),
+      pairs AS (
         SELECT
           CASE WHEN source.person_id < candidate.person_id THEN source.person_id ELSE candidate.person_id END AS leftPersonId,
           CASE WHEN source.person_id < candidate.person_id THEN candidate.person_id ELSE source.person_id END AS rightPersonId,
-          suggestion.score AS score
+          suggestion.score AS score,
+          MIN(sourceCount.photoCount, candidateCount.photoCount) AS smallestPhotoCount
         FROM ${FACE_SUGGESTION_TABLE} suggestion
         JOIN ${FACE_ASSIGNMENT_TABLE} source ON source.face_id = suggestion.face_id
         JOIN ${FACE_ASSIGNMENT_TABLE} candidate ON candidate.face_id = suggestion.candidate_face_id
         JOIN ${PEOPLE_TABLE} sourcePerson ON sourcePerson.id = source.person_id
         JOIN ${PEOPLE_TABLE} candidatePerson ON candidatePerson.id = candidate.person_id
+        JOIN person_counts sourceCount ON sourceCount.personId = source.person_id
+        JOIN person_counts candidateCount ON candidateCount.personId = candidate.person_id
         WHERE source.person_id <> candidate.person_id
           AND sourcePerson.hidden = 0 AND candidatePerson.hidden = 0
       )
-      SELECT leftPersonId, rightPersonId, MAX(score) AS score
+      SELECT leftPersonId, rightPersonId, MAX(score) AS score, MAX(smallestPhotoCount) AS smallestPhotoCount
       FROM pairs
       GROUP BY leftPersonId, rightPersonId
-      ORDER BY score DESC
-    `).all();
+      ORDER BY CASE WHEN MAX(smallestPhotoCount) >= ? THEN 1 ELSE 0 END DESC, score DESC
+    `).all(reviewMinimumPhotos);
     const exclusions = new Set(db.prepare(`
       SELECT DISTINCT
         CASE WHEN leftAssignment.person_id < rightAssignment.person_id THEN leftAssignment.person_id ELSE rightAssignment.person_id END AS leftPersonId,
@@ -4774,6 +4806,74 @@ ipcMain.handle("people:bulk-decision", async (_event, { kind, personIds, targetP
   }
 });
 
+ipcMain.handle("people:action", async (_event, { action, personId, value } = {}) => {
+  try {
+    if (!resourceManager?.isInstalled("facial-recognition")) {
+      return { success: false, error: "Download Facial Recognition before changing people." };
+    }
+    if (!facialRecognitionService) startFacialRecognitionService();
+    const data = await facialRecognitionService?.managePerson(
+      String(action ?? ""),
+      Number(personId),
+      value,
+    );
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:action error:", error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("people:list-faces", (_event, { fileId, personId } = {}) => {
+  try {
+    initDatabase();
+    const parsedFileId = Number(fileId);
+    const parsedPersonId = personId == null ? null : Number(personId);
+    if (!Number.isInteger(parsedFileId) || (parsedPersonId != null && !Number.isInteger(parsedPersonId))) {
+      return { success: true, data: [] };
+    }
+    if (![FACE_TABLE, FACE_ASSIGNMENT_TABLE].every(hasDatabaseTable)) {
+      return { success: true, data: [] };
+    }
+    const wherePerson = parsedPersonId == null ? "" : " AND assignment.person_id = ?";
+    const data = db.prepare(`
+      SELECT
+        face.id AS faceId,
+        assignment.person_id AS personId,
+        face.box_left AS boxLeft,
+        face.box_top AS boxTop,
+        face.box_width AS boxWidth,
+        face.box_height AS boxHeight
+      FROM ${FACE_TABLE} face
+      JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = face.id
+      WHERE face.file_id = ?${wherePerson}
+      ORDER BY face.recognition_quality DESC, face.id ASC
+    `).all(...(parsedPersonId == null ? [parsedFileId] : [parsedFileId, parsedPersonId]));
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:list-faces error:", error);
+    return { success: false, error: error.message, data: [] };
+  }
+});
+
+ipcMain.handle("people:face-action", async (_event, { action, faceId, targetPersonId } = {}) => {
+  try {
+    if (!resourceManager?.isInstalled("facial-recognition")) {
+      return { success: false, error: "Download Facial Recognition before changing people." };
+    }
+    if (!facialRecognitionService) startFacialRecognitionService();
+    const data = await facialRecognitionService?.managePersonFace(
+      String(action ?? ""),
+      Number(faceId),
+      targetPersonId == null ? null : Number(targetPersonId),
+    );
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:face-action error:", error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle("people:ensure-face-avatar", async (_event, { faceId } = {}) => {
   try {
     initDatabase();
@@ -4817,6 +4917,7 @@ ipcMain.handle("people:list", () => {
       SELECT
         p.id,
         p.name,
+        p.hidden AS hidden,
         p.cover_face_id AS coverFaceId,
         cover.file_id AS coverFileId,
         cover.box_left AS boxLeft,
@@ -4834,7 +4935,6 @@ ipcMain.handle("people:list", () => {
       JOIN ${FACE_TABLE} member ON member.id = assignment.face_id
       JOIN ${FACE_TABLE} cover ON cover.id = p.cover_face_id
       JOIN files source ON source.id = cover.file_id
-      WHERE p.hidden = 0
       GROUP BY p.id
       ORDER BY itemCount DESC, faceCount DESC, p.id ASC
     `).all().map((row) => ({
