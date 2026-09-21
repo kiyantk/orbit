@@ -34,6 +34,10 @@ const {
   PEOPLE_TABLE,
   FACE_ASSIGNMENT_TABLE,
   PERSON_REPRESENTATIVE_TABLE,
+  MANUAL_PERSON_FACE_TABLE,
+  PERSON_EXCLUSION_TABLE,
+  FACE_SUGGESTION_TABLE,
+  IGNORED_FACE_TABLE,
 } = require("./facial-recognition-schema");
 const crypto = require("crypto");
 const { parse } = require("csv-parse/sync");
@@ -178,13 +182,14 @@ app.whenReady().then(() => {
 
   process.chdir(path.dirname(app.getPath("exe")));
 
-  // Serve thumbnails via a custom scheme: orbit://thumbs/<filename>
+  // Serve cached visual assets via orbit://thumbs/<filename> and
+  // orbit://faces/<filename>.
   protocol.handle("orbit", async (request) => {
     try {
       const url = new URL(request.url);
-      // orbit://thumbs/<filename>
       const pathname = url.pathname.replace(/^\/+/, ""); // strip leading slashes
-      const filePath = path.join(dataDir, "thumbnails", pathname);
+      const directory = url.hostname === "faces" ? "face-crops" : "thumbnails";
+      const filePath = path.join(dataDir, directory, pathname);
 
       return new Response(fs.readFileSync(filePath), {
         headers: {
@@ -710,6 +715,15 @@ function removeFacialRecognitionDataForFiles(fileIds) {
     }
     if (hasDatabaseTable(PERSON_REPRESENTATIVE_TABLE)) {
       db.prepare(`DELETE FROM ${PERSON_REPRESENTATIVE_TABLE} WHERE face_id IN (${facePlaceholders})`).run(...faceIds);
+    }
+    if (hasDatabaseTable(FACE_SUGGESTION_TABLE)) {
+      db.prepare(`DELETE FROM ${FACE_SUGGESTION_TABLE} WHERE face_id IN (${facePlaceholders}) OR candidate_face_id IN (${facePlaceholders})`).run(...faceIds, ...faceIds);
+    }
+    if (hasDatabaseTable(MANUAL_PERSON_FACE_TABLE)) {
+      db.prepare(`DELETE FROM ${MANUAL_PERSON_FACE_TABLE} WHERE face_id IN (${facePlaceholders})`).run(...faceIds);
+    }
+    if (hasDatabaseTable(IGNORED_FACE_TABLE)) {
+      db.prepare(`DELETE FROM ${IGNORED_FACE_TABLE} WHERE face_id IN (${facePlaceholders})`).run(...faceIds);
     }
     db.prepare(`DELETE FROM ${FACE_TABLE} WHERE id IN (${facePlaceholders})`).run(...faceIds);
   }
@@ -2054,7 +2068,72 @@ const METADATA_CONCURRENCY = Math.max(1, Math.floor(cpuCount / 2)); // 1 task pe
 const THUMBNAIL_CONCURRENCY = Math.max(1, Math.floor(cpuCount / 3)); // 1 task per 3 cores
 const BATCH_SIZE = 1000; // insert batch size
 const dbWriteLimit = pLimit(1);
+const faceAvatarLimit = pLimit(2);
+const FACE_AVATAR_SIZE = 512;
+const faceAvatarJobs = new Map();
+const faceAvatarFailures = new Set();
 const SOURCE_RETRY_DELAY_MS = 5000;
+
+function faceAvatarOutputPath(faceId) {
+  return path.join(dataDir, "face-crops", `${faceId}.jpg`);
+}
+
+async function generateFaceAvatar(face) {
+  const outputPath = faceAvatarOutputPath(face.id);
+  if (fs.existsSync(outputPath)) return outputPath;
+  if (faceAvatarFailures.has(face.id)) return null;
+  if (faceAvatarJobs.has(face.id)) return faceAvatarJobs.get(face.id);
+
+  const job = faceAvatarLimit(async () => {
+    try {
+      if (!face.path || !fs.existsSync(face.path)) return null;
+      fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+      const extension = path.extname(face.path).toLowerCase();
+      let image;
+      if (extension === ".heic" || extension === ".heif") {
+        const decoded = await heicDecode({ buffer: fs.readFileSync(face.path) });
+        image = sharp(decoded.data, { raw: { width: decoded.width, height: decoded.height, channels: 4 } }).rotate();
+      } else {
+        image = sharp(face.path, { failOnError: false }).rotate();
+      }
+
+      let width = Number(face.imageWidth);
+      let height = Number(face.imageHeight);
+      if ([5, 6, 7, 8].includes(Number(face.imageOrientation))) [width, height] = [height, width];
+      if (!width || !height) {
+        const metadata = await image.metadata();
+        width = metadata.width;
+        height = metadata.height;
+      }
+      if (!width || !height) return null;
+
+      const faceWidth = Math.max(1, Number(face.boxWidth) * width);
+      const faceHeight = Math.max(1, Number(face.boxHeight) * height);
+      const centerX = (Number(face.boxLeft) + Number(face.boxWidth) / 2) * width;
+      const centerY = (Number(face.boxTop) + Number(face.boxHeight) / 2) * height;
+      const side = Math.max(1, Math.min(Math.max(width, height), Math.max(faceWidth, faceHeight) * 1.75));
+      const cropWidth = Math.min(width, Math.round(side));
+      const cropHeight = Math.min(height, Math.round(side));
+      const left = Math.max(0, Math.min(width - cropWidth, Math.round(centerX - cropWidth / 2)));
+      const top = Math.max(0, Math.min(height - cropHeight, Math.round(centerY - cropHeight / 2)));
+
+      await image
+        .extract({ left, top, width: cropWidth, height: cropHeight })
+        .resize(FACE_AVATAR_SIZE, FACE_AVATAR_SIZE, { fit: "cover" })
+        .jpeg({ quality: 90, chromaSubsampling: "4:4:4" })
+        .toFile(outputPath);
+      return outputPath;
+    } catch (error) {
+      faceAvatarFailures.add(face.id);
+      console.warn(`Face avatar skipped for face ${face.id}:`, summarizeThumbnailError(error));
+      return null;
+    } finally {
+      faceAvatarJobs.delete(face.id);
+    }
+  });
+  faceAvatarJobs.set(face.id, job);
+  return job;
+}
 
 const waitForSourceRetry = () =>
   new Promise((resolve) => setTimeout(resolve, SOURCE_RETRY_DELAY_MS));
@@ -4605,6 +4684,129 @@ ipcMain.handle("facial-recognition:rebuild", () => {
   }
 });
 
+ipcMain.handle("people:recluster", async () => {
+  try {
+    if (!resourceManager?.isInstalled("facial-recognition")) {
+      return { success: false, error: "Download Facial Recognition before regrouping people." };
+    }
+    if (!facialRecognitionService) startFacialRecognitionService();
+    const result = await facialRecognitionService?.recluster();
+    return { success: true, data: result };
+  } catch (error) {
+    console.error("people:recluster error:", error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("people:next-suggestion", () => {
+  try {
+    initDatabase();
+    if (![PEOPLE_TABLE, FACE_ASSIGNMENT_TABLE, MANUAL_PERSON_FACE_TABLE, PERSON_EXCLUSION_TABLE, FACE_SUGGESTION_TABLE].every(hasDatabaseTable)) {
+      return { success: true, data: null };
+    }
+    const candidates = db.prepare(`
+      WITH pairs AS (
+        SELECT
+          CASE WHEN source.person_id < candidate.person_id THEN source.person_id ELSE candidate.person_id END AS leftPersonId,
+          CASE WHEN source.person_id < candidate.person_id THEN candidate.person_id ELSE source.person_id END AS rightPersonId,
+          suggestion.score AS score
+        FROM ${FACE_SUGGESTION_TABLE} suggestion
+        JOIN ${FACE_ASSIGNMENT_TABLE} source ON source.face_id = suggestion.face_id
+        JOIN ${FACE_ASSIGNMENT_TABLE} candidate ON candidate.face_id = suggestion.candidate_face_id
+        JOIN ${PEOPLE_TABLE} sourcePerson ON sourcePerson.id = source.person_id
+        JOIN ${PEOPLE_TABLE} candidatePerson ON candidatePerson.id = candidate.person_id
+        WHERE source.person_id <> candidate.person_id
+          AND sourcePerson.hidden = 0 AND candidatePerson.hidden = 0
+      )
+      SELECT leftPersonId, rightPersonId, MAX(score) AS score
+      FROM pairs
+      GROUP BY leftPersonId, rightPersonId
+      ORDER BY score DESC
+    `).all();
+    const exclusions = new Set(db.prepare(`
+      SELECT DISTINCT
+        CASE WHEN leftAssignment.person_id < rightAssignment.person_id THEN leftAssignment.person_id ELSE rightAssignment.person_id END AS leftPersonId,
+        CASE WHEN leftAssignment.person_id < rightAssignment.person_id THEN rightAssignment.person_id ELSE leftAssignment.person_id END AS rightPersonId
+      FROM ${PERSON_EXCLUSION_TABLE} exclusion
+      JOIN ${MANUAL_PERSON_FACE_TABLE} leftFace ON leftFace.manual_person_id = exclusion.left_manual_person_id
+      JOIN ${FACE_ASSIGNMENT_TABLE} leftAssignment ON leftAssignment.face_id = leftFace.face_id
+      JOIN ${MANUAL_PERSON_FACE_TABLE} rightFace ON rightFace.manual_person_id = exclusion.right_manual_person_id
+      JOIN ${FACE_ASSIGNMENT_TABLE} rightAssignment ON rightAssignment.face_id = rightFace.face_id
+      WHERE leftAssignment.person_id <> rightAssignment.person_id
+    `).all().map((row) => `${row.leftPersonId}:${row.rightPersonId}`));
+    const data = candidates.find((candidate) => !exclusions.has(`${candidate.leftPersonId}:${candidate.rightPersonId}`)) ?? null;
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:next-suggestion error:", error);
+    return { success: false, error: error.message, data: null };
+  }
+});
+
+ipcMain.handle("people:decision", async (_event, { kind, firstPersonId, secondPersonId } = {}) => {
+  try {
+    if (!resourceManager?.isInstalled("facial-recognition")) {
+      return { success: false, error: "Download Facial Recognition before reviewing matches." };
+    }
+    if (!facialRecognitionService) startFacialRecognitionService();
+    const data = await facialRecognitionService?.decidePeople(kind, Number(firstPersonId), Number(secondPersonId));
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:decision error:", error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("people:bulk-decision", async (_event, { kind, personIds, targetPersonId } = {}) => {
+  try {
+    if (!resourceManager?.isInstalled("facial-recognition")) {
+      return { success: false, error: "Download Facial Recognition before changing people." };
+    }
+    if (!facialRecognitionService) startFacialRecognitionService();
+    const data = await facialRecognitionService?.decidePeopleBulk(
+      kind,
+      Array.isArray(personIds) ? personIds.map(Number) : [],
+      Number(targetPersonId),
+    );
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:bulk-decision error:", error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("people:ensure-face-avatar", async (_event, { faceId } = {}) => {
+  try {
+    initDatabase();
+    const parsedFaceId = Number(faceId);
+    if (!Number.isInteger(parsedFaceId) || !hasDatabaseTable(FACE_TABLE)) {
+      return { success: false, error: "Invalid face." };
+    }
+    const face = db.prepare(`
+      SELECT
+        face.id,
+        face.box_left AS boxLeft,
+        face.box_top AS boxTop,
+        face.box_width AS boxWidth,
+        face.box_height AS boxHeight,
+        source.path,
+        source.width AS imageWidth,
+        source.height AS imageHeight,
+        source.orientation AS imageOrientation
+      FROM ${FACE_TABLE} face
+      JOIN files source ON source.id = face.file_id
+      WHERE face.id = ?
+    `).get(parsedFaceId);
+    if (!face) return { success: false, error: "Face is no longer available." };
+    const outputPath = await generateFaceAvatar(face);
+    return outputPath
+      ? { success: true, url: `orbit://faces/${face.id}.jpg` }
+      : { success: false, error: "Unable to create a face avatar." };
+  } catch (error) {
+    console.error("people:ensure-face-avatar error:", error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle("people:list", () => {
   try {
     initDatabase();
@@ -4621,6 +4823,7 @@ ipcMain.handle("people:list", () => {
         cover.box_top AS boxTop,
         cover.box_width AS boxWidth,
         cover.box_height AS boxHeight,
+        source.path AS coverPath,
         source.width AS imageWidth,
         source.height AS imageHeight,
         COUNT(member.id) AS faceCount,

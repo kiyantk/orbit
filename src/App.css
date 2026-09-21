@@ -2585,6 +2585,87 @@ input[type="checkbox"] {
   color: #b99ae3;
 }
 
+.people-bulk-status {
+  min-width: 0;
+  color: #f2edf6;
+  font-size: 16px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.people-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.people-regroup-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid #554763;
+  border-radius: 6px;
+  color: #e5d9ee;
+  background: #292231;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.people-regroup-button:hover:not(:disabled),
+.people-regroup-button:focus-visible {
+  border-color: #80659b;
+  background: #33283e;
+  outline: none;
+}
+
+.people-regroup-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.people-bulk-merge-button,
+.people-bulk-hide-button {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.people-bulk-merge-button {
+  border-color: #79579b;
+  color: #f4eafb;
+  background: #49335f;
+}
+
+.people-bulk-hide-button {
+  border-color: #754957;
+  color: #f2d2d9;
+  background: #442833;
+}
+
+.people-bulk-merge-button:hover:not(:disabled) {
+  background: #5a4073;
+}
+
+.people-bulk-hide-button:hover:not(:disabled) {
+  background: #56323f;
+}
+
+.people-bulk-merge-button:disabled,
+.people-bulk-hide-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .people-search {
   display: flex;
   align-items: center;
@@ -2629,6 +2710,268 @@ input[type="checkbox"] {
   padding-right: 12px;
 }
 
+.people-regroup-error {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #774755;
+  border-radius: 6px;
+  color: #f1c9d2;
+  background: #311f28;
+  font-size: 13px;
+}
+
+.people-review-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 7, 11, 0.72);
+}
+
+.people-review-dialog {
+  width: min(560px, 100%);
+  padding: 24px;
+  border: 1px solid #51445d;
+  border-radius: 12px;
+  color: #eee8f1;
+  background: #1b1821;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.48);
+}
+
+.people-review-dialog h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.people-review-description,
+.people-review-message {
+  margin: 12px 0 0;
+  color: #b9b0c2;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.people-review-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin: 22px 0;
+}
+
+.people-review-person {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  color: #eee8f1;
+  font-size: 14px;
+  text-align: center;
+}
+
+.people-review-person .person-avatar {
+  margin-bottom: 10px;
+}
+
+.people-review-avatar-button {
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.people-review-avatar-button:focus-visible {
+  outline: 2px solid #b99ae3;
+  outline-offset: 3px;
+}
+
+.people-review-person strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.people-review-person span {
+  margin-top: 3px;
+  color: #a9a1b0;
+  font-size: 12px;
+}
+
+.people-review-actions {
+  display: flex;
+  justify-content: space-around;
+  gap: 10px;
+}
+
+.people-review-actions button,
+.people-review-close,
+.people-review-remove {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #5d506a;
+  border-radius: 6px;
+  color: #eee8f1;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.people-review-not-same,
+.people-review-close,
+.people-review-remove {
+  background: #29242f;
+}
+
+.people-review-remove {
+  margin-top: 9px;
+  border-color: #754957;
+  color: #f0cbd3;
+}
+
+.people-review-actions .people-review-remove {
+  margin-top: 0;
+}
+
+.people-review-merge {
+  border-color: #79579b !important;
+  background: #49335f;
+}
+
+.people-review-actions button:hover:not(:disabled),
+.people-review-close:hover:not(:disabled) {
+  background: #3b3145;
+}
+
+.people-review-actions button:disabled,
+.people-review-close:disabled,
+.people-review-remove:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.people-review-close {
+  display: block;
+  margin: 18px 0 0 auto;
+}
+
+.people-bulk-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.people-bulk-confirm-actions .people-review-close,
+.people-bulk-confirm-actions .people-review-remove,
+.people-bulk-confirm-actions .people-review-merge {
+  min-height: 34px;
+  margin: 0;
+  padding: 0 12px;
+  border: 1px solid #5d506a;
+  border-radius: 6px;
+  color: #eee8f1;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.people-bulk-confirm-actions .people-review-remove {
+  border-color: #754957;
+  color: #f0cbd3;
+}
+
+.people-bulk-confirm-actions .people-review-merge {
+  border-color: #79579b;
+  background: #49335f;
+}
+
+.people-review-image-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.88);
+}
+
+.people-review-image-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(1180px, 100%);
+  height: min(860px, 100%);
+  overflow: hidden;
+  border: 1px solid #4b4056;
+  border-radius: 10px;
+  background: #15121a;
+}
+
+.people-review-image-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 48px;
+  padding: 0 14px;
+  color: #eee8f1;
+  font-size: 14px;
+}
+
+.people-review-image-toolbar > div {
+  display: flex;
+  gap: 7px;
+}
+
+.people-review-image-toolbar button {
+  min-width: 34px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid #5b5065;
+  border-radius: 5px;
+  color: #eee8f1;
+  background: #2a2530;
+  cursor: pointer;
+  font: inherit;
+}
+
+.people-review-image-toolbar button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.people-review-image-canvas {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.people-review-full-image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  user-select: none;
+  transform-origin: center;
+  transition: transform 80ms ease-out;
+}
+
+.people-review-face-focus {
+  transform-origin: center;
+}
+
+
 .person-card {
   display: flex;
   flex-direction: column;
@@ -2653,6 +2996,21 @@ input[type="checkbox"] {
 .person-card:hover .person-avatar,
 .person-card:focus-visible .person-avatar {
   transform: scale(1.035);
+}
+
+.person-card--bulk-selected,
+.person-card--bulk-target {
+  background: #2d2636;
+}
+
+.person-card--bulk-selected .person-avatar-ring {
+  border-color: #bd92df;
+  box-shadow: inset 0 0 0 2px rgba(189, 146, 223, 0.22);
+}
+
+.person-card--bulk-target .person-avatar-ring {
+  border-color: #e0c1fa;
+  box-shadow: inset 0 0 0 2px rgba(224, 193, 250, 0.35);
 }
 
 .person-avatar {
@@ -2689,6 +3047,7 @@ input[type="checkbox"] {
   border: 2px solid rgba(221, 201, 239, 0.4);
   border-radius: inherit;
   pointer-events: none;
+  margin-top: 0px !important;
 }
 
 .person-card-name {

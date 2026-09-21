@@ -17,6 +17,12 @@ const {
   PEOPLE_TABLE,
   FACE_ASSIGNMENT_TABLE,
   PERSON_REPRESENTATIVE_TABLE,
+  MANUAL_PERSON_TABLE,
+  MANUAL_PERSON_FACE_TABLE,
+  PERSON_EXCLUSION_TABLE,
+  FACE_SUGGESTION_TABLE,
+  IGNORED_FACE_TABLE,
+  HIDDEN_MANUAL_PERSON_TABLE,
 } = require("./facial-recognition-schema");
 
 const RECHECK_INTERVAL_MS = 60_000;
@@ -29,6 +35,7 @@ const MAX_REPRESENTATIVES_PER_PERSON = 6;
 const STRONG_MATCH_THRESHOLD = 0.70;
 const CONSISTENT_MATCH_THRESHOLD = 0.64;
 const SECONDARY_MATCH_THRESHOLD = 0.54;
+const SUGGESTION_MATCH_THRESHOLD = 0.58;
 
 let db = null;
 let child = null;
@@ -104,17 +111,49 @@ function ensureSchema() {
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
       PRIMARY KEY (person_id, face_id)
     );
+    CREATE TABLE IF NOT EXISTS ${MANUAL_PERSON_TABLE} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+    CREATE TABLE IF NOT EXISTS ${MANUAL_PERSON_FACE_TABLE} (
+      manual_person_id INTEGER NOT NULL,
+      face_id INTEGER NOT NULL UNIQUE,
+      PRIMARY KEY (manual_person_id, face_id)
+    );
+    CREATE TABLE IF NOT EXISTS ${PERSON_EXCLUSION_TABLE} (
+      left_manual_person_id INTEGER NOT NULL,
+      right_manual_person_id INTEGER NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      PRIMARY KEY (left_manual_person_id, right_manual_person_id),
+      CHECK (left_manual_person_id < right_manual_person_id)
+    );
+    CREATE TABLE IF NOT EXISTS ${FACE_SUGGESTION_TABLE} (
+      face_id INTEGER PRIMARY KEY,
+      candidate_face_id INTEGER NOT NULL,
+      score REAL NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+    CREATE TABLE IF NOT EXISTS ${IGNORED_FACE_TABLE} (
+      face_id INTEGER PRIMARY KEY,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+    CREATE TABLE IF NOT EXISTS ${HIDDEN_MANUAL_PERSON_TABLE} (
+      manual_person_id INTEGER PRIMARY KEY,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
     CREATE INDEX IF NOT EXISTS idx_face_scans_version ON ${FACE_SCAN_TABLE}(pipeline_version, status);
     CREATE INDEX IF NOT EXISTS idx_faces_file ON ${FACE_TABLE}(file_id);
     CREATE INDEX IF NOT EXISTS idx_faces_embedding_version ON ${FACE_TABLE}(embedding_version);
     CREATE INDEX IF NOT EXISTS idx_face_assignments_person ON ${FACE_ASSIGNMENT_TABLE}(person_id);
     CREATE INDEX IF NOT EXISTS idx_person_representatives_person ON ${PERSON_REPRESENTATIVE_TABLE}(person_id);
+    CREATE INDEX IF NOT EXISTS idx_manual_person_faces_person ON ${MANUAL_PERSON_FACE_TABLE}(manual_person_id);
+    CREATE INDEX IF NOT EXISTS idx_face_suggestions_candidate ON ${FACE_SUGGESTION_TABLE}(candidate_face_id);
   `);
 
   const current = db.prepare(`SELECT value FROM ${FACE_METADATA_TABLE} WHERE key = 'pipeline_version'`).get()?.value;
   if (current !== FACE_PIPELINE_VERSION) {
     db.transaction(() => {
-      db.exec(`DELETE FROM ${FACE_ASSIGNMENT_TABLE}; DELETE FROM ${PERSON_REPRESENTATIVE_TABLE}; DELETE FROM ${FACE_TABLE}; DELETE FROM ${FACE_SCAN_TABLE}; DELETE FROM ${PEOPLE_TABLE};`);
+      db.exec(`DELETE FROM ${FACE_ASSIGNMENT_TABLE}; DELETE FROM ${PERSON_REPRESENTATIVE_TABLE}; DELETE FROM ${FACE_SUGGESTION_TABLE}; DELETE FROM ${IGNORED_FACE_TABLE}; DELETE FROM ${HIDDEN_MANUAL_PERSON_TABLE}; DELETE FROM ${MANUAL_PERSON_FACE_TABLE}; DELETE FROM ${PERSON_EXCLUSION_TABLE}; DELETE FROM ${MANUAL_PERSON_TABLE}; DELETE FROM ${FACE_TABLE}; DELETE FROM ${FACE_SCAN_TABLE}; DELETE FROM ${PEOPLE_TABLE};`);
       db.prepare(`
         INSERT INTO ${FACE_METADATA_TABLE}(key, value) VALUES ('pipeline_version', ?)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -182,23 +221,28 @@ function cosineSimilarity(left, right) {
   return total;
 }
 
-function bestPersonMatch(embedding) {
-  let selected = null;
+function findPersonMatches(embedding) {
+  let acceptedMatch = null;
+  let closestMatch = null;
   for (const [personId, representatives] of personRepresentatives) {
     const scores = representatives
-      .map((representative) => cosineSimilarity(embedding, representative.embedding))
-      .sort((a, b) => b - a);
-    const best = scores[0] ?? -1;
-    const second = scores[1] ?? -1;
+      .map((representative) => ({ representative, score: cosineSimilarity(embedding, representative.embedding) }))
+      .sort((a, b) => b.score - a.score);
+    const best = scores[0]?.score ?? -1;
+    const second = scores[1]?.score ?? -1;
+    const representative = scores[0]?.representative;
+    if (!closestMatch || best > closestMatch.score) {
+      closestMatch = { personId, faceId: representative?.faceId ?? null, score: best };
+    }
     // A single exceptionally strong match can join a group. Otherwise demand
     // corroboration from a second representative to resist transitive merges.
     const accepted = best >= STRONG_MATCH_THRESHOLD ||
       (scores.length >= 2 && best >= CONSISTENT_MATCH_THRESHOLD && second >= SECONDARY_MATCH_THRESHOLD);
-    if (accepted && (!selected || best > selected.score)) {
-      selected = { personId, score: best };
+    if (accepted && (!acceptedMatch || best > acceptedMatch.score)) {
+      acceptedMatch = { personId, faceId: representative?.faceId ?? null, score: best };
     }
   }
-  return selected;
+  return { acceptedMatch, closestMatch };
 }
 
 function addRepresentative(personId, faceId, quality, embedding) {
@@ -212,17 +256,11 @@ function addRepresentative(personId, faceId, quality, embedding) {
   personRepresentatives.set(personId, representatives);
 }
 
-function assignFace(faceId, quality, embedding) {
-  const match = bestPersonMatch(embedding);
-  let personId = match?.personId;
-  if (!personId) {
-    const result = db.prepare(`INSERT INTO ${PEOPLE_TABLE}(cover_face_id) VALUES (?)`).run(faceId);
-    personId = result.lastInsertRowid;
-  }
+function assignFaceToPerson(faceId, personId, quality, embedding, assignedBy = "auto", score = null) {
   db.prepare(`
     INSERT INTO ${FACE_ASSIGNMENT_TABLE}(face_id, person_id, score, assigned_by)
-    VALUES (?, ?, ?, 'auto')
-  `).run(faceId, personId, match?.score ?? null);
+    VALUES (?, ?, ?, ?)
+  `).run(faceId, personId, score, assignedBy);
 
   const cover = db.prepare(`
     SELECT f.recognition_quality AS quality
@@ -235,12 +273,32 @@ function assignFace(faceId, quality, embedding) {
   addRepresentative(personId, faceId, quality, embedding);
 }
 
+function assignFace(faceId, quality, embedding, recordSuggestion = true) {
+  const { acceptedMatch, closestMatch } = findPersonMatches(embedding);
+  let personId = acceptedMatch?.personId;
+  if (!personId) {
+    const result = db.prepare(`INSERT INTO ${PEOPLE_TABLE}(cover_face_id) VALUES (?)`).run(faceId);
+    personId = result.lastInsertRowid;
+    if (recordSuggestion && closestMatch?.faceId && closestMatch.score >= SUGGESTION_MATCH_THRESHOLD) {
+      db.prepare(`
+        INSERT INTO ${FACE_SUGGESTION_TABLE}(face_id, candidate_face_id, score)
+        VALUES (?, ?, ?)
+        ON CONFLICT(face_id) DO UPDATE SET candidate_face_id = excluded.candidate_face_id, score = excluded.score
+      `).run(faceId, closestMatch.faceId, closestMatch.score);
+    }
+  }
+  assignFaceToPerson(faceId, personId, quality, embedding, "auto", acceptedMatch?.score ?? null);
+}
+
 function deleteFacesForFile(fileId) {
   const ids = db.prepare(`SELECT id FROM ${FACE_TABLE} WHERE file_id = ?`).all(fileId).map((row) => row.id);
   if (!ids.length) return;
   const placeholders = ids.map(() => "?").join(",");
   db.prepare(`DELETE FROM ${FACE_ASSIGNMENT_TABLE} WHERE face_id IN (${placeholders})`).run(...ids);
   db.prepare(`DELETE FROM ${PERSON_REPRESENTATIVE_TABLE} WHERE face_id IN (${placeholders})`).run(...ids);
+  db.prepare(`DELETE FROM ${FACE_SUGGESTION_TABLE} WHERE face_id IN (${placeholders}) OR candidate_face_id IN (${placeholders})`).run(...ids, ...ids);
+  db.prepare(`DELETE FROM ${IGNORED_FACE_TABLE} WHERE face_id IN (${placeholders})`).run(...ids);
+  db.prepare(`DELETE FROM ${MANUAL_PERSON_FACE_TABLE} WHERE face_id IN (${placeholders})`).run(...ids);
   db.prepare(`DELETE FROM ${FACE_TABLE} WHERE id IN (${placeholders})`).run(...ids);
 }
 
@@ -265,6 +323,165 @@ function deleteOrphanedPeople() {
       SELECT 1 FROM ${FACE_ASSIGNMENT_TABLE} a WHERE a.person_id = ${PEOPLE_TABLE}.id
     )
   `).run();
+  db.prepare(`
+    DELETE FROM ${PERSON_EXCLUSION_TABLE}
+    WHERE NOT EXISTS (SELECT 1 FROM ${MANUAL_PERSON_FACE_TABLE} f WHERE f.manual_person_id = left_manual_person_id)
+       OR NOT EXISTS (SELECT 1 FROM ${MANUAL_PERSON_FACE_TABLE} f WHERE f.manual_person_id = right_manual_person_id)
+  `).run();
+  db.prepare(`
+    DELETE FROM ${MANUAL_PERSON_TABLE}
+    WHERE NOT EXISTS (SELECT 1 FROM ${MANUAL_PERSON_FACE_TABLE} f WHERE f.manual_person_id = ${MANUAL_PERSON_TABLE}.id)
+  `).run();
+  db.prepare(`
+    DELETE FROM ${HIDDEN_MANUAL_PERSON_TABLE}
+    WHERE NOT EXISTS (SELECT 1 FROM ${MANUAL_PERSON_TABLE} manual WHERE manual.id = manual_person_id)
+  `).run();
+}
+
+function mergeManualPeople(leftId, rightId) {
+  if (leftId === rightId) return leftId;
+  const primaryId = Math.min(leftId, rightId);
+  const secondaryId = Math.max(leftId, rightId);
+  const exclusions = db.prepare(`
+    SELECT left_manual_person_id, right_manual_person_id
+    FROM ${PERSON_EXCLUSION_TABLE}
+    WHERE left_manual_person_id = ? OR right_manual_person_id = ?
+  `).all(secondaryId, secondaryId);
+  db.prepare(`UPDATE ${MANUAL_PERSON_FACE_TABLE} SET manual_person_id = ? WHERE manual_person_id = ?`).run(primaryId, secondaryId);
+  db.prepare(`DELETE FROM ${PERSON_EXCLUSION_TABLE} WHERE left_manual_person_id = ? OR right_manual_person_id = ?`).run(secondaryId, secondaryId);
+  for (const exclusion of exclusions) {
+    const otherId = exclusion.left_manual_person_id === secondaryId
+      ? exclusion.right_manual_person_id
+      : exclusion.left_manual_person_id;
+    if (otherId === primaryId) continue;
+    const [left, right] = [primaryId, otherId].sort((a, b) => a - b);
+    db.prepare(`INSERT OR IGNORE INTO ${PERSON_EXCLUSION_TABLE}(left_manual_person_id, right_manual_person_id) VALUES (?, ?)`).run(left, right);
+  }
+  db.prepare(`DELETE FROM ${MANUAL_PERSON_TABLE} WHERE id = ?`).run(secondaryId);
+  return primaryId;
+}
+
+function ensureManualPerson(personId) {
+  const existing = db.prepare(`
+    SELECT DISTINCT manual.manual_person_id
+    FROM ${MANUAL_PERSON_FACE_TABLE} manual
+    JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = manual.face_id
+    WHERE assignment.person_id = ?
+  `).all(personId).map((row) => row.manual_person_id);
+  let manualPersonId = existing[0];
+  if (!manualPersonId) {
+    manualPersonId = Number(db.prepare(`INSERT INTO ${MANUAL_PERSON_TABLE} DEFAULT VALUES`).run().lastInsertRowid);
+  }
+  for (const groupId of existing.slice(1)) manualPersonId = mergeManualPeople(manualPersonId, groupId);
+  db.prepare(`
+    INSERT OR IGNORE INTO ${MANUAL_PERSON_FACE_TABLE}(manual_person_id, face_id)
+    SELECT ?, face_id FROM ${FACE_ASSIGNMENT_TABLE} WHERE person_id = ?
+  `).run(manualPersonId, personId);
+  return manualPersonId;
+}
+
+function rebuildPersonRepresentatives(personId) {
+  db.prepare(`DELETE FROM ${PERSON_REPRESENTATIVE_TABLE} WHERE person_id = ?`).run(personId);
+  personRepresentatives.delete(personId);
+  const faces = db.prepare(`
+    SELECT face.id, face.recognition_quality AS quality, face.embedding
+    FROM ${FACE_ASSIGNMENT_TABLE} assignment
+    JOIN ${FACE_TABLE} face ON face.id = assignment.face_id
+    WHERE assignment.person_id = ? AND face.embedding IS NOT NULL AND face.embedding_version = ?
+    ORDER BY face.recognition_quality DESC, face.id ASC
+    LIMIT ?
+  `).all(personId, FACE_EMBEDDING_VERSION, MAX_REPRESENTATIVES_PER_PERSON);
+  for (const face of faces) {
+    const embedding = float32FromBlob(face.embedding);
+    if (embedding.length === 512) addRepresentative(personId, face.id, face.quality ?? 0, embedding);
+  }
+  if (faces[0]) db.prepare(`UPDATE ${PEOPLE_TABLE} SET cover_face_id = ?, updated_at = strftime('%s', 'now') WHERE id = ?`).run(faces[0].id, personId);
+}
+
+function hidePeople(personIds) {
+  const ids = Array.from(new Set(personIds.map(Number).filter(Number.isInteger)));
+  if (!ids.length) throw new Error("Choose at least one person to hide.");
+  for (const personId of ids) {
+    const manualPersonId = ensureManualPerson(personId);
+    db.prepare(`INSERT OR IGNORE INTO ${HIDDEN_MANUAL_PERSON_TABLE}(manual_person_id) VALUES (?)`).run(manualPersonId);
+  }
+  const placeholders = ids.map(() => "?").join(",");
+  db.prepare(`UPDATE ${PEOPLE_TABLE} SET hidden = 1, updated_at = strftime('%s', 'now') WHERE id IN (${placeholders})`).run(...ids);
+  return { hidden: ids.length };
+}
+
+function mergePeopleIntoTarget(targetPersonId, sourcePersonIds) {
+  const sourceIds = Array.from(new Set(sourcePersonIds.map(Number).filter((personId) => (
+    Number.isInteger(personId) && personId !== targetPersonId
+  ))));
+  if (!sourceIds.length) throw new Error("Choose at least one person to merge.");
+
+  let targetManualId = ensureManualPerson(targetPersonId);
+  for (const sourcePersonId of sourceIds) {
+    targetManualId = mergeManualPeople(targetManualId, ensureManualPerson(sourcePersonId));
+  }
+
+  const placeholders = sourceIds.map(() => "?").join(",");
+  db.prepare(`
+    UPDATE ${FACE_ASSIGNMENT_TABLE}
+    SET person_id = ?, assigned_by = 'manual'
+    WHERE person_id IN (${placeholders})
+  `).run(targetPersonId, ...sourceIds);
+  rebuildPersonRepresentatives(targetPersonId);
+  db.prepare(`DELETE FROM ${PERSON_REPRESENTATIVE_TABLE} WHERE person_id IN (${placeholders})`).run(...sourceIds);
+  for (const sourcePersonId of sourceIds) personRepresentatives.delete(sourcePersonId);
+  deleteOrphanedPeople();
+  return { kind: "merge", personId: targetPersonId, merged: sourceIds.length, manualPersonId: targetManualId };
+}
+
+function applyPeopleBulkDecision(kind, personIds, targetPersonId = null) {
+  const ids = Array.from(new Set((Array.isArray(personIds) ? personIds : []).map(Number).filter(Number.isInteger)));
+  if (!ids.length) throw new Error("Choose at least one person.");
+  const people = db.prepare(`SELECT id FROM ${PEOPLE_TABLE} WHERE id IN (${ids.map(() => "?").join(",")})`).all(...ids);
+  if (people.length !== ids.length) throw new Error("One of these people is no longer available.");
+
+  const result = db.transaction(() => {
+    if (kind === "hide") return hidePeople(ids);
+    if (kind === "merge") {
+      if (!Number.isInteger(targetPersonId)) throw new Error("Choose the person to merge into.");
+      const target = db.prepare(`SELECT id FROM ${PEOPLE_TABLE} WHERE id = ?`).get(targetPersonId);
+      if (!target) throw new Error("The merge destination is no longer available.");
+      return mergePeopleIntoTarget(targetPersonId, ids);
+    }
+    throw new Error("Unknown bulk people decision.");
+  })();
+  loadPersonRepresentatives();
+  emitProgress();
+  return result;
+}
+
+function applyPeopleDecision(kind, firstPersonId, secondPersonId) {
+  if (!Number.isInteger(firstPersonId) || !Number.isInteger(secondPersonId) || firstPersonId === secondPersonId) {
+    throw new Error("Choose two different people.");
+  }
+  const people = db.prepare(`SELECT id FROM ${PEOPLE_TABLE} WHERE id IN (?, ?)`).all(firstPersonId, secondPersonId);
+  if (people.length !== 2) throw new Error("One of these people is no longer available.");
+
+  const result = db.transaction(() => {
+    if (kind === "hide-first") return hidePeople([firstPersonId]);
+    if (kind === "hide-second") return hidePeople([secondPersonId]);
+    if (kind === "hide-both") return hidePeople([firstPersonId, secondPersonId]);
+    if (kind === "merge") {
+      return mergePeopleIntoTarget(firstPersonId, [secondPersonId]);
+    }
+    const firstManualId = ensureManualPerson(firstPersonId);
+    const secondManualId = ensureManualPerson(secondPersonId);
+    if (kind === "exclude") {
+      if (firstManualId === secondManualId) throw new Error("These people are already merged.");
+      const [left, right] = [firstManualId, secondManualId].sort((a, b) => a - b);
+      db.prepare(`INSERT OR IGNORE INTO ${PERSON_EXCLUSION_TABLE}(left_manual_person_id, right_manual_person_id) VALUES (?, ?)`).run(left, right);
+      return { kind };
+    }
+    throw new Error("Unknown people decision.");
+  })();
+  loadPersonRepresentatives();
+  emitProgress();
+  return result;
 }
 
 function storeResult(result, error = null) {
@@ -413,13 +630,61 @@ function startChild() {
 function rebuild() {
   clearTimeout(loopTimer);
   db.transaction(() => {
-    db.exec(`DELETE FROM ${FACE_ASSIGNMENT_TABLE}; DELETE FROM ${PERSON_REPRESENTATIVE_TABLE}; DELETE FROM ${FACE_TABLE}; DELETE FROM ${FACE_SCAN_TABLE}; DELETE FROM ${PEOPLE_TABLE};`);
+    db.exec(`DELETE FROM ${FACE_ASSIGNMENT_TABLE}; DELETE FROM ${PERSON_REPRESENTATIVE_TABLE}; DELETE FROM ${FACE_SUGGESTION_TABLE}; DELETE FROM ${IGNORED_FACE_TABLE}; DELETE FROM ${HIDDEN_MANUAL_PERSON_TABLE}; DELETE FROM ${MANUAL_PERSON_FACE_TABLE}; DELETE FROM ${PERSON_EXCLUSION_TABLE}; DELETE FROM ${MANUAL_PERSON_TABLE}; DELETE FROM ${FACE_TABLE}; DELETE FROM ${FACE_SCAN_TABLE}; DELETE FROM ${PEOPLE_TABLE};`);
   })();
   loadPersonRepresentatives();
   emitProgress();
   // Let an already-running inference finish before scheduling the next job;
   // the child process intentionally handles one photo at a time.
   if (!paused && modelReady && !pending) schedule(100);
+}
+
+function reclusterPeople() {
+  clearTimeout(loopTimer);
+  personRepresentatives.clear();
+
+  const faces = db.prepare(`
+    SELECT face.id, face.recognition_quality AS quality, face.embedding
+    FROM ${FACE_TABLE} face
+    LEFT JOIN ${IGNORED_FACE_TABLE} ignored ON ignored.face_id = face.id
+    WHERE face.embedding IS NOT NULL AND face.embedding_version = ? AND ignored.face_id IS NULL
+    ORDER BY face.recognition_quality DESC, face.id ASC
+  `).all(FACE_EMBEDDING_VERSION);
+  const manualFaces = new Map(db.prepare(`
+    SELECT manual_person_id, face_id
+    FROM ${MANUAL_PERSON_FACE_TABLE}
+  `).all().map((row) => [row.face_id, row.manual_person_id]));
+  const manualPeople = new Map();
+  const hiddenManualPeople = new Set(db.prepare(`SELECT manual_person_id FROM ${HIDDEN_MANUAL_PERSON_TABLE}`).all().map((row) => row.manual_person_id));
+
+  db.transaction(() => {
+    // Keep user-confirmed identity groups intact, but rebuild every automatic
+    // assignment from the stored embeddings without re-running inference.
+    db.exec(`DELETE FROM ${FACE_ASSIGNMENT_TABLE}; DELETE FROM ${PERSON_REPRESENTATIVE_TABLE}; DELETE FROM ${FACE_SUGGESTION_TABLE}; DELETE FROM ${PEOPLE_TABLE};`);
+    for (const face of faces) {
+      const manualPersonId = manualFaces.get(face.id);
+      if (!manualPersonId) continue;
+      const embedding = float32FromBlob(face.embedding);
+      if (embedding.length !== 512) continue;
+      let personId = manualPeople.get(manualPersonId);
+      if (!personId) {
+        personId = Number(db.prepare(`INSERT INTO ${PEOPLE_TABLE}(cover_face_id, hidden) VALUES (?, ?)`).run(face.id, hiddenManualPeople.has(manualPersonId) ? 1 : 0).lastInsertRowid);
+        manualPeople.set(manualPersonId, personId);
+      }
+      assignFaceToPerson(face.id, personId, face.quality ?? 0, embedding, "manual");
+    }
+    for (const face of faces) {
+      if (manualFaces.has(face.id)) continue;
+      const embedding = float32FromBlob(face.embedding);
+      if (embedding.length === 512) assignFace(face.id, face.quality ?? 0, embedding);
+    }
+    deleteOrphanedPeople();
+  })();
+
+  loadPersonRepresentatives();
+  emitProgress();
+  if (!paused && modelReady && !pending) schedule(100);
+  return { faces: faces.length, people: peopleCount };
 }
 
 parentPort.on("message", (message) => {
@@ -445,6 +710,27 @@ parentPort.on("message", (message) => {
     schedule(50);
   } else if (message.type === "rebuild") {
     rebuild();
+  } else if (message.type === "recluster") {
+    try {
+      const result = reclusterPeople();
+      parentPort.postMessage({ type: "reclustered", requestId: message.requestId, ...result });
+    } catch (error) {
+      parentPort.postMessage({ type: "recluster-error", requestId: message.requestId, error: error.message });
+    }
+  } else if (message.type === "people-decision") {
+    try {
+      const result = applyPeopleDecision(message.kind, Number(message.firstPersonId), Number(message.secondPersonId));
+      parentPort.postMessage({ type: "people-decision-complete", requestId: message.requestId, result });
+    } catch (error) {
+      parentPort.postMessage({ type: "people-decision-error", requestId: message.requestId, error: error.message });
+    }
+  } else if (message.type === "people-bulk-decision") {
+    try {
+      const result = applyPeopleBulkDecision(message.kind, message.personIds, Number(message.targetPersonId));
+      parentPort.postMessage({ type: "people-bulk-decision-complete", requestId: message.requestId, result });
+    } catch (error) {
+      parentPort.postMessage({ type: "people-bulk-decision-error", requestId: message.requestId, error: error.message });
+    }
   } else if (message.type === "stop") {
     stopped = true;
     clearTimeout(loopTimer);

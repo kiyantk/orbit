@@ -19,6 +19,12 @@ class FacialRecognitionService {
     this._people = 0;
     this._paused = false;
     this._pausePending = false;
+    this._reclusterRequestId = 0;
+    this._pendingRecluster = null;
+    this._peopleDecisionRequestId = 0;
+    this._pendingPeopleDecision = null;
+    this._peopleBulkDecisionRequestId = 0;
+    this._pendingPeopleBulkDecision = null;
   }
 
   start() {
@@ -51,8 +57,65 @@ class FacialRecognitionService {
     this._worker?.postMessage({ type: "rebuild" });
   }
 
+  recluster() {
+    if (this._pendingRecluster) return this._pendingRecluster.promise;
+    this.start();
+    if (!this._worker) return Promise.reject(new Error("Facial-recognition worker is unavailable."));
+
+    const requestId = ++this._reclusterRequestId;
+    let resolveRequest;
+    let rejectRequest;
+    const promise = new Promise((resolve, reject) => {
+      resolveRequest = resolve;
+      rejectRequest = reject;
+    });
+    this._pendingRecluster = { requestId, promise, resolve: resolveRequest, reject: rejectRequest };
+    this._worker.postMessage({ type: "recluster", requestId });
+    return promise;
+  }
+
+  decidePeople(kind, firstPersonId, secondPersonId) {
+    if (this._pendingPeopleDecision) return this._pendingPeopleDecision.promise;
+    this.start();
+    if (!this._worker) return Promise.reject(new Error("Facial-recognition worker is unavailable."));
+
+    const requestId = ++this._peopleDecisionRequestId;
+    let resolveRequest;
+    let rejectRequest;
+    const promise = new Promise((resolve, reject) => {
+      resolveRequest = resolve;
+      rejectRequest = reject;
+    });
+    this._pendingPeopleDecision = { requestId, promise, resolve: resolveRequest, reject: rejectRequest };
+    this._worker.postMessage({ type: "people-decision", requestId, kind, firstPersonId, secondPersonId });
+    return promise;
+  }
+
+  decidePeopleBulk(kind, personIds, targetPersonId = null) {
+    if (this._pendingPeopleBulkDecision) return this._pendingPeopleBulkDecision.promise;
+    this.start();
+    if (!this._worker) return Promise.reject(new Error("Facial-recognition worker is unavailable."));
+
+    const requestId = ++this._peopleBulkDecisionRequestId;
+    let resolveRequest;
+    let rejectRequest;
+    const promise = new Promise((resolve, reject) => {
+      resolveRequest = resolve;
+      rejectRequest = reject;
+    });
+    this._pendingPeopleBulkDecision = { requestId, promise, resolve: resolveRequest, reject: rejectRequest };
+    this._worker.postMessage({ type: "people-bulk-decision", requestId, kind, personIds, targetPersonId });
+    return promise;
+  }
+
   stop() {
     this._stopped = true;
+    this._pendingRecluster?.reject(new Error("Facial-recognition worker stopped before regrouping completed."));
+    this._pendingRecluster = null;
+    this._pendingPeopleDecision?.reject(new Error("Facial-recognition worker stopped before saving the people decision."));
+    this._pendingPeopleDecision = null;
+    this._pendingPeopleBulkDecision?.reject(new Error("Facial-recognition worker stopped before saving the bulk people decision."));
+    this._pendingPeopleBulkDecision = null;
     this._worker?.postMessage({ type: "stop" });
     setTimeout(() => this._worker?.terminate().catch(() => {}), 2_000);
     this._worker = null;
@@ -78,6 +141,12 @@ class FacialRecognitionService {
     this._worker.on("message", (message) => this._handleMessage(message));
     this._worker.on("error", (error) => console.error("[FacialRecognitionService] worker error:", error));
     this._worker.on("exit", (code) => {
+      this._pendingRecluster?.reject(new Error("Facial-recognition worker exited before regrouping completed."));
+      this._pendingRecluster = null;
+      this._pendingPeopleDecision?.reject(new Error("Facial-recognition worker exited before saving the people decision."));
+      this._pendingPeopleDecision = null;
+      this._pendingPeopleBulkDecision?.reject(new Error("Facial-recognition worker exited before saving the bulk people decision."));
+      this._pendingPeopleBulkDecision = null;
       if (this._stopped) return;
       console.warn(`[FacialRecognitionService] worker exited (code=${code}), restarting…`);
       this._worker = null;
@@ -104,6 +173,24 @@ class FacialRecognitionService {
       if (win && !win.isDestroyed()) {
         win.webContents.send("facial-recognition-progress", this.getStatus());
       }
+    } else if (message.type === "reclustered" || message.type === "recluster-error") {
+      if (message.requestId !== this._pendingRecluster?.requestId) return;
+      const request = this._pendingRecluster;
+      this._pendingRecluster = null;
+      if (message.type === "reclustered") request.resolve({ faces: message.faces ?? 0, people: message.people ?? 0 });
+      else request.reject(new Error(message.error || "Unable to regroup people."));
+    } else if (message.type === "people-decision-complete" || message.type === "people-decision-error") {
+      if (message.requestId !== this._pendingPeopleDecision?.requestId) return;
+      const request = this._pendingPeopleDecision;
+      this._pendingPeopleDecision = null;
+      if (message.type === "people-decision-complete") request.resolve(message.result ?? {});
+      else request.reject(new Error(message.error || "Unable to save the people decision."));
+    } else if (message.type === "people-bulk-decision-complete" || message.type === "people-bulk-decision-error") {
+      if (message.requestId !== this._pendingPeopleBulkDecision?.requestId) return;
+      const request = this._pendingPeopleBulkDecision;
+      this._pendingPeopleBulkDecision = null;
+      if (message.type === "people-bulk-decision-complete") request.resolve(message.result ?? {});
+      else request.reject(new Error(message.error || "Unable to save the bulk people decision."));
     } else if (message.type === "log") {
       (console[message.level] ?? console.log)(`[facial-recognition-worker] ${message.message}`);
     }
