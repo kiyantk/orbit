@@ -2012,7 +2012,7 @@ const SettingsView = ({
                 {
                   label: "Open in default viewer:",
                   keys: [
-                    <ShortcutKey key="ctrl">CTRL</ShortcutKey>,
+                    <ShortcutKey key="shift">SHIFT</ShortcutKey>,
                     <span>+</span>,
                     <ShortcutKey key="lmb2">Left Mouse Button</ShortcutKey>,
                   ],

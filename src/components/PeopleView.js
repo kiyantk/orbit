@@ -73,6 +73,57 @@ function FaceAvatar({ person, label }) {
   );
 }
 
+function FaceGridAvatar({ face, label, onSeparate, separating }) {
+  const [faceAvatarUrl, setFaceAvatarUrl] = useState(null);
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
+  const boxWidth = Math.max(0.01, Number(face.boxWidth) || 0.01);
+  const boxHeight = Math.max(0.01, Number(face.boxHeight) || 0.01);
+  const centerX = Math.max(0, Math.min(1, (Number(face.boxLeft) || 0) + boxWidth / 2));
+  const centerY = Math.max(0, Math.min(1, (Number(face.boxTop) || 0) + boxHeight / 2));
+  const aspect = Math.max(0.1, Number(face.imageWidth) / Math.max(1, Number(face.imageHeight)) || 1);
+  const cropScale = 1 / Math.min(1, Math.max(boxWidth, boxHeight) * 1.55);
+  const thumbnailStyle = {
+    width: `${100 * cropScale * aspect}%`,
+    height: `${100 * cropScale}%`,
+    left: `${50 - centerX * 100 * cropScale * aspect}%`,
+    top: `${50 - centerY * 100 * cropScale}%`,
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setFaceAvatarUrl(null);
+    setThumbnailFailed(false);
+    window.electron.ipcRenderer
+      .invoke("people:ensure-face-avatar", { faceId: face.faceId })
+      .then((result) => {
+        if (!cancelled && result?.success && result.url) setFaceAvatarUrl(result.url);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [face.faceId]);
+
+  const sourceUrl = faceAvatarUrl || (!thumbnailFailed && face.fileId ? `orbit://thumbs/${face.fileId}_thumb.jpg` : null);
+
+  return (
+    <button type="button" className="person-face-grid-avatar" onClick={onSeparate} disabled={separating} aria-label={label}>
+      {sourceUrl
+        ? <img
+          className={faceAvatarUrl ? "person-face-grid-avatar-crop" : "person-face-grid-thumbnail"}
+          src={sourceUrl}
+          alt=""
+          draggable={false}
+          style={faceAvatarUrl ? undefined : thumbnailStyle}
+          onError={() => {
+            if (faceAvatarUrl) setFaceAvatarUrl(null);
+            else setThumbnailFailed(true);
+          }}
+        />
+        : <FontAwesomeIcon icon={faUsers} aria-hidden="true" />}
+      <span className="person-face-grid-action">{separating ? "Separating..." : "Separate face"}</span>
+    </button>
+  );
+}
+
 function normalizeMinimumPhotos(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.min(1000, Math.max(1, Math.floor(parsed))) : 1;
@@ -104,7 +155,13 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
   const [renameValue, setRenameValue] = useState("");
   const [splitPerson, setSplitPerson] = useState(null);
   const [personActionSaving, setPersonActionSaving] = useState(false);
+  const [faceGridPerson, setFaceGridPerson] = useState(null);
+  const [faceGridFaces, setFaceGridFaces] = useState([]);
+  const [faceGridLoading, setFaceGridLoading] = useState(false);
+  const [faceGridError, setFaceGridError] = useState(null);
+  const [faceGridActionId, setFaceGridActionId] = useState(null);
   const containerRef = useRef(null);
+  const faceGridRequestRef = useRef(0);
   const reviewImageDragRef = useRef(null);
   const reviewImageElementRef = useRef(null);
   const reviewFaceMaskId = useRef(`people-review-face-mask-${Math.random().toString(36).slice(2)}`).current;
@@ -205,7 +262,36 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
     setBulkError(null);
   }, []);
 
-  const handlePersonClick = useCallback((person) => {
+  const openFaceGrid = useCallback(async (person) => {
+    const requestId = ++faceGridRequestRef.current;
+    setFaceGridPerson(person);
+    setFaceGridFaces([]);
+    setFaceGridError(null);
+    setFaceGridLoading(true);
+    try {
+      const result = await window.electron.ipcRenderer.invoke("people:list-person-faces", { personId: person.id });
+      if (!result?.success) throw new Error(result?.error || "Unable to load this person's faces.");
+      if (requestId === faceGridRequestRef.current) setFaceGridFaces(result.data ?? []);
+    } catch (error) {
+      if (requestId === faceGridRequestRef.current) setFaceGridError(error.message || "Unable to load this person's faces.");
+    } finally {
+      if (requestId === faceGridRequestRef.current) setFaceGridLoading(false);
+    }
+  }, []);
+
+  const closeFaceGrid = useCallback(() => {
+    faceGridRequestRef.current += 1;
+    setFaceGridPerson(null);
+    setFaceGridFaces([]);
+    setFaceGridError(null);
+    setFaceGridActionId(null);
+  }, []);
+
+  const handlePersonClick = useCallback((event, person) => {
+    if (event.ctrlKey) {
+      openFaceGrid(person);
+      return;
+    }
     if (!bulkMode) {
       if (person.fileIds?.length) onViewPerson(person);
       return;
@@ -221,7 +307,7 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
         ? current.filter((personId) => personId !== person.id)
         : [...current, person.id]
     ));
-  }, [bulkMode, bulkTargetId, onViewPerson]);
+  }, [bulkMode, bulkTargetId, onViewPerson, openFaceGrid]);
 
   const openBulkConfirmation = useCallback(() => {
     if (!bulkPersonIds.length) return;
@@ -296,6 +382,54 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
     await managePerson(person.hidden ? "unhide" : "hide", person);
   }, [managePerson]);
 
+  const hideFaceGridPerson = useCallback(async () => {
+    if (!faceGridPerson || personActionSaving || faceGridActionId) return;
+    setPersonActionSaving(true);
+    setFaceGridError(null);
+    try {
+      const result = await window.electron.ipcRenderer.invoke("people:action", {
+        action: "hide",
+        personId: faceGridPerson.id,
+      });
+      if (!result?.success) throw new Error(result?.error || "Unable to hide this person.");
+      await load();
+      closeFaceGrid();
+    } catch (error) {
+      setFaceGridError(error.message || "Unable to hide this person.");
+    } finally {
+      setPersonActionSaving(false);
+    }
+  }, [closeFaceGrid, faceGridActionId, faceGridPerson, load, personActionSaving]);
+
+  const separateFaceFromGrid = useCallback(async (face) => {
+    if (!faceGridPerson || faceGridActionId) return;
+    setFaceGridActionId(face.faceId);
+    setFaceGridError(null);
+    try {
+      const result = await window.electron.ipcRenderer.invoke("people:face-action", {
+        action: "separate",
+        faceId: face.faceId,
+      });
+      if (!result?.success) throw new Error(result?.error || "Unable to separate this face.");
+      setFaceGridFaces((current) => current.filter((currentFace) => currentFace.faceId !== face.faceId));
+      await load();
+      if (faceGridFaces.length === 1) closeFaceGrid();
+    } catch (error) {
+      setFaceGridError(error.message || "Unable to separate this face.");
+    } finally {
+      setFaceGridActionId(null);
+    }
+  }, [closeFaceGrid, faceGridActionId, faceGridFaces.length, faceGridPerson, load]);
+
+  useEffect(() => {
+    if (!faceGridPerson) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") closeFaceGrid();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [closeFaceGrid, faceGridPerson]);
+
   const unavailable = resource?.state === "download-required" || resource?.state === "download-failed";
   const columns = columnCountFor(size.width || 0);
   const cellWidth = cellWidthFor(size.width || 0, columns);
@@ -317,7 +451,7 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
           width: cellWidth,
           height: CARD_HEIGHT,
         }}
-        onClick={() => handlePersonClick(person)}
+        onClick={(event) => handlePersonClick(event, person)}
         onContextMenu={(event) => {
           event.preventDefault();
           if (!bulkMode) setContextMenu({ x: event.clientX, y: event.clientY, person });
@@ -559,6 +693,42 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
           onSplit={openSplitPerson}
           onToggleHidden={togglePersonHidden}
         />
+      )}
+      {faceGridPerson && (
+        <div className="people-face-grid-overlay" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) closeFaceGrid();
+        }}>
+          <section className="people-face-grid-dialog" role="dialog" aria-modal="true" aria-labelledby="people-face-grid-title">
+            <div className="people-face-grid-header">
+              <div>
+                <h2 id="people-face-grid-title">Faces for {faceGridPerson.displayName}</h2>
+                {!faceGridLoading && !faceGridError && <span>{faceGridFaces.length === 1 ? "1 face" : `${faceGridFaces.length.toLocaleString()} faces`}</span>}
+              </div>
+              <div className="people-face-grid-header-actions">
+                <button type="button" className="people-face-grid-hide" onClick={hideFaceGridPerson} disabled={personActionSaving || faceGridActionId != null}>{personActionSaving ? "Hiding..." : "Hide person"}</button>
+                <button type="button" onClick={closeFaceGrid} disabled={faceGridActionId != null}>Close</button>
+              </div>
+            </div>
+            <div className="people-face-grid-content">
+              {faceGridLoading && <div className="memories-loading"><div className="loader" /></div>}
+              {!faceGridLoading && faceGridError && <div className="people-regroup-error" role="alert">{faceGridError}</div>}
+              {!faceGridLoading && !faceGridError && faceGridFaces.length === 0 && <div className="people-review-message">No faces are currently assigned to this person.</div>}
+              {!faceGridLoading && !faceGridError && faceGridFaces.length > 0 && (
+                <div className="person-face-grid">
+                  {faceGridFaces.map((face, index) => (
+                    <FaceGridAvatar
+                      key={face.faceId}
+                      face={face}
+                      label={`Separate face ${index + 1} from ${faceGridPerson.displayName}`}
+                      onSeparate={() => separateFaceFromGrid(face)}
+                      separating={faceGridActionId === face.faceId}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
       )}
       {bulkConfirmation && (
         <div className="people-review-overlay" role="presentation" onMouseDown={(event) => {

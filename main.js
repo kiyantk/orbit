@@ -4856,6 +4856,36 @@ ipcMain.handle("people:list-faces", (_event, { fileId, personId } = {}) => {
   }
 });
 
+ipcMain.handle("people:list-person-faces", (_event, { personId } = {}) => {
+  try {
+    initDatabase();
+    const parsedPersonId = Number(personId);
+    if (!Number.isInteger(parsedPersonId) || ![FACE_TABLE, FACE_ASSIGNMENT_TABLE].every(hasDatabaseTable)) {
+      return { success: true, data: [] };
+    }
+    const data = db.prepare(`
+      SELECT
+        face.id AS faceId,
+        face.file_id AS fileId,
+        face.box_left AS boxLeft,
+        face.box_top AS boxTop,
+        face.box_width AS boxWidth,
+        face.box_height AS boxHeight,
+        source.width AS imageWidth,
+        source.height AS imageHeight
+      FROM ${FACE_TABLE} face
+      JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = face.id
+      JOIN files source ON source.id = face.file_id
+      WHERE assignment.person_id = ?
+      ORDER BY face.recognition_quality DESC, face.id ASC
+    `).all(parsedPersonId);
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:list-person-faces error:", error);
+    return { success: false, error: error.message, data: [] };
+  }
+});
+
 ipcMain.handle("people:face-action", async (_event, { action, faceId, targetPersonId } = {}) => {
   try {
     if (!resourceManager?.isInstalled("facial-recognition")) {
@@ -4945,6 +4975,34 @@ ipcMain.handle("people:list", () => {
   } catch (error) {
     console.error("people:list error:", error);
     return { success: false, error: error.message, data: [] };
+  }
+});
+
+ipcMain.handle("people:resolve-person-for-files", (_event, { fileIds, preferredPersonId } = {}) => {
+  try {
+    initDatabase();
+    const ids = Array.from(new Set((Array.isArray(fileIds) ? fileIds : [])
+      .map(Number)
+      .filter(Number.isInteger)));
+    if (!ids.length || ![FACE_TABLE, FACE_ASSIGNMENT_TABLE].every(hasDatabaseTable)) {
+      return { success: true, personId: null };
+    }
+
+    const placeholders = ids.map(() => "?").join(",");
+    const preferredId = Number(preferredPersonId);
+    const result = db.prepare(`
+      SELECT assignment.person_id AS personId, COUNT(*) AS matchedFaces
+      FROM ${FACE_ASSIGNMENT_TABLE} assignment
+      JOIN ${FACE_TABLE} face ON face.id = assignment.face_id
+      WHERE face.file_id IN (${placeholders})
+      GROUP BY assignment.person_id
+      ORDER BY CASE WHEN assignment.person_id = ? THEN 0 ELSE 1 END, matchedFaces DESC, assignment.person_id ASC
+      LIMIT 1
+    `).get(...ids, Number.isInteger(preferredId) ? preferredId : -1);
+    return { success: true, personId: result?.personId ?? null };
+  } catch (error) {
+    console.error("people:resolve-person-for-files error:", error);
+    return { success: false, error: error.message, personId: null };
   }
 });
 

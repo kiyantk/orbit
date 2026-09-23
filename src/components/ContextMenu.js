@@ -14,6 +14,7 @@ const ContextMenu = ({
   onFindSimilar,
   activePersonId,
   onPersonAction,
+  selectedItemIds = [],
 }) => {
   const menuRef = useRef(null);
   const [showTags, setShowTags] = useState(false);
@@ -22,6 +23,8 @@ const ContextMenu = ({
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [hasEmbedding, setHasEmbedding] = useState(false);
   const [position, setPosition] = useState({ left: x, top: y });
+  const itemIds = selectedItemIds.length ? selectedItemIds : [item.id];
+  const isMultiSelection = itemIds.length > 1;
 
   useLayoutEffect(() => {
     const updatePosition = () => {
@@ -73,39 +76,30 @@ const ContextMenu = ({
     }
   }, [showTags]);
 
-  // Toggle tag assignment for current item
+  // A tag is checked only when every selected item has it. Turning on a
+  // partially assigned tag fills in the missing assignments; turning it off
+  // removes it from the complete selection.
   const handleTagToggle = async (tag) => {
-    const isTagged = Array.isArray(tag.media_ids)
-      ? tag.media_ids.includes(item.id)
-      : false;
+    const taggedIds = new Set(tag.media_ids || []);
+    const isTaggedForAll = itemIds.every((id) => taggedIds.has(id));
+    const idsToUpdate = isTaggedForAll
+      ? itemIds
+      : itemIds.filter((id) => !taggedIds.has(id));
+    const channel = isTaggedForAll ? "tag:remove-item" : "tag:add-item";
 
-    if (isTagged) {
-      // Untag
-      await window.electron.ipcRenderer.invoke("tag:remove-item", {
-        tagId: tag.id,
-        mediaId: item.id,
+    await Promise.all(idsToUpdate.map((mediaId) =>
+      window.electron.ipcRenderer.invoke(channel, { tagId: tag.id, mediaId }),
+    ));
+
+    setTags((prev) => prev.map((t) => {
+      if (t.id !== tag.id) return t;
+      const mediaIds = new Set(t.media_ids || []);
+      idsToUpdate.forEach((id) => {
+        if (isTaggedForAll) mediaIds.delete(id);
+        else mediaIds.add(id);
       });
-      setTags((prev) =>
-        prev.map((t) =>
-          t.id === tag.id
-            ? { ...t, media_ids: t.media_ids.filter((id) => id !== item.id) }
-            : t,
-        ),
-      );
-    } else {
-      // Tag
-      await window.electron.ipcRenderer.invoke("tag:add-item", {
-        tagId: tag.id,
-        mediaId: item.id,
-      });
-      setTags((prev) =>
-        prev.map((t) =>
-          t.id === tag.id
-            ? { ...t, media_ids: [...(t.media_ids || []), item.id] }
-            : t,
-        ),
-      );
-    }
+      return { ...t, media_ids: [...mediaIds] };
+    }));
   };
 
   const revealFromCtx = () => {
@@ -143,28 +137,29 @@ const ContextMenu = ({
         <div
           style={{
             padding: "6px 12px",
-            cursor: "pointer",
+            cursor: isMultiSelection ? "default" : "pointer",
             whiteSpace: "nowrap",
             textAlign: "left",
+            opacity: isMultiSelection ? 0.4 : 1,
           }}
-          className="context-menu-item"
+          className={isMultiSelection ? "" : "context-menu-item"}
           onMouseEnter={() => { setShowTags(false); setShowPerson(false); }}
-          onClick={() => revealFromCtx()}
+          onClick={() => !isMultiSelection && revealFromCtx()}
         >
           Reveal in all
         </div>
         <div
           style={{
             padding: "6px 12px",
-            cursor: hasEmbedding ? "pointer" : "default",
+            cursor: hasEmbedding && !isMultiSelection ? "pointer" : "default",
             whiteSpace: "nowrap",
             textAlign: "left",
-            opacity: hasEmbedding ? 1 : 0.4,
+            opacity: hasEmbedding && !isMultiSelection ? 1 : 0.4,
           }}
-          className={hasEmbedding ? "context-menu-item" : ""}
+          className={hasEmbedding && !isMultiSelection ? "context-menu-item" : ""}
           onMouseEnter={() => { setShowTags(false); setShowPerson(false); }}
           onClick={() => {
-            if (!hasEmbedding) return;
+            if (!hasEmbedding || isMultiSelection) return;
             onFindSimilar(item);
             onClose();
           }}
@@ -212,7 +207,9 @@ const ContextMenu = ({
         >
           Remove
         </div>
-        <span className="context-menu-filename">{item.filename}</span>
+        <span className="context-menu-filename">
+          {isMultiSelection ? `${itemIds.length} items selected` : item.filename}
+        </span>
       </div>
 
       {/* Tag submenu */}
@@ -234,9 +231,9 @@ const ContextMenu = ({
             </div>
           )}
           {tags.map((tag) => {
-            const isTagged = Array.isArray(tag.media_ids)
-              ? tag.media_ids.includes(item.id)
-              : false;
+            const isTagged = itemIds.every((id) =>
+              Array.isArray(tag.media_ids) && tag.media_ids.includes(id),
+            );
 
             return (
               <label
@@ -271,24 +268,24 @@ const ContextMenu = ({
             padding: "6px 0",
           }}
         >
-          <div className="context-menu-item" style={{ padding: "6px 12px" }} onClick={() => onPersonAction("add-to-person", item)}>
+          <div className="context-menu-item" style={{ padding: "6px 12px", opacity: isMultiSelection ? 0.4 : 1, cursor: isMultiSelection ? "default" : "pointer" }} onClick={() => !isMultiSelection && onPersonAction("add-to-person", item, itemIds)}>
             Add to person
           </div>
           {activePersonId && (
             <>
-              <div className="context-menu-item" style={{ padding: "6px 12px" }} onClick={() => onPersonAction("separate", item)}>
+              <div className="context-menu-item" style={{ padding: "6px 12px" }} onClick={() => onPersonAction("separate", item, itemIds)}>
                 Separate from person
               </div>
-              <div className="context-menu-item" style={{ padding: "6px 12px" }} onClick={() => onPersonAction("set-avatar", item)}>
+              <div className="context-menu-item" style={{ padding: "6px 12px", opacity: isMultiSelection ? 0.4 : 1, cursor: isMultiSelection ? "default" : "pointer" }} onClick={() => !isMultiSelection && onPersonAction("set-avatar", item, itemIds)}>
                 Set as avatar
               </div>
-              <div className="context-menu-item" style={{ padding: "6px 12px" }} onClick={() => onPersonAction("not-same-person", item)}>
+              <div className="context-menu-item" style={{ padding: "6px 12px" }} onClick={() => onPersonAction("not-same-person", item, itemIds)}>
                 Not the same person
               </div>
             </>
           )}
           {activePersonId && (
-            <div className="context-menu-item" style={{ padding: "6px 12px", color: "#ff9a9a" }} onClick={() => onPersonAction("hide-not-face", item)}>
+            <div className="context-menu-item" style={{ padding: "6px 12px", color: "#ff9a9a" }} onClick={() => onPersonAction("hide-not-face", item, itemIds)}>
               Hide / Not a face
             </div>
           )}
@@ -302,7 +299,7 @@ const ContextMenu = ({
             <>
               Are you sure you want to remove
               <br />
-              <strong>{item.filename}</strong>
+              <strong>{isMultiSelection ? `${itemIds.length} selected items` : item.filename}</strong>
               <br />
               from the index?
               <br />
@@ -315,7 +312,7 @@ const ContextMenu = ({
           confirmButtonStyle={{ backgroundColor: "rgb(166 49 49)" }}
           onCancel={() => setShowRemoveConfirm(false)}
           onConfirm={() => {
-            onRemoveItem(item.id);
+            onRemoveItem(itemIds);
             setShowRemoveConfirm(false);
             onClose();
           }}

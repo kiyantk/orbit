@@ -69,6 +69,7 @@ const App = () => {
   });
   const [explorerLoading, setExplorerLoading] = useState(false);
   const [itemToReveal, setItemToReveal] = useState(null);
+  const [activeExplorerPersonId, setActiveExplorerPersonId] = useState(null);
   const ambientModeActive =
     activeView === "shuffle" && shuffleSettings.ambientMode;
 
@@ -135,6 +136,9 @@ const App = () => {
         return;
       }
       setExplorerScroll(0);
+      if (actionPanelType === "filter" && !hasActiveExplorerConstraint(data)) {
+        setActiveExplorerPersonId(null);
+      }
       setFilters(data);
     } else if (actionPanelType === "shuffle-filter") {
       setShuffleFilters(data);
@@ -297,6 +301,10 @@ const App = () => {
     setMapViewType("cluster");
   };
 
+  useEffect(() => {
+    if (activeView !== "explore") setActiveExplorerPersonId(null);
+  }, [activeView]);
+
   // Apply new settings from Settings popup
   const applySettings = (newSettings) => {
     setSettings(newSettings); // Update state
@@ -330,6 +338,30 @@ const App = () => {
     setPreviewPanelKey(previewPanelKey + 1);
   };
 
+  const handlePersonItemsRemoved = useCallback((itemIds) => {
+    const removedIds = new Set(itemIds || []);
+    if (!removedIds.size) return;
+    setFilters((current) => {
+      if (!activeExplorerPersonId || !Array.isArray(current?.ids)) return current;
+      return {
+        ...current,
+        ids: current.ids.filter((id) => !removedIds.has(id)),
+      };
+    });
+  }, [activeExplorerPersonId]);
+
+  const handleActivePersonChange = useCallback((personId) => {
+    const nextPersonId = Number.isInteger(Number(personId)) ? Number(personId) : null;
+    setActiveExplorerPersonId(nextPersonId);
+    setFilters((current) => {
+      if (!current?._facePersonId && nextPersonId == null) return current;
+      const next = { ...(current || {}) };
+      if (nextPersonId == null) delete next._facePersonId;
+      else next._facePersonId = nextPersonId;
+      return next;
+    });
+  }, []);
+
   const handleExplorerScale = (newScale) => {
     setExplorerScale(newScale);
   };
@@ -348,6 +380,7 @@ const App = () => {
 
   const resetFilters = () => {
     setFilters({});
+    setActiveExplorerPersonId(null);
     setActionPanelKey(actionPanelKey + 1);
   };
 
@@ -519,8 +552,10 @@ const App = () => {
               currentSettings={settings}
               onViewPerson={(person) => {
                 setFilters({
+                  ids: person.fileIds,
                   _facePersonId: person.id,
                 });
+                setActiveExplorerPersonId(person.id);
                 setExplorerScroll(0);
                 setActiveView("explore");
               }}
@@ -551,6 +586,9 @@ const App = () => {
                 explorerLoading={explorerLoading}
                 itemToReveal={itemToReveal}
                 setItemToReveal={setItemToReveal}
+                onPersonItemsRemoved={handlePersonItemsRemoved}
+                activePersonId={activeExplorerPersonId}
+                onActivePersonChange={handleActivePersonChange}
               />
               <div className="border-l overflow-y-auto bg-gray-50">
                 {selectedItem ? (
@@ -579,7 +617,7 @@ const App = () => {
                         ? (filters.searchTerm ?? "")
                         : ""
                     }
-                    facePersonId={filters?._facePersonId ?? null}
+                    facePersonId={activeExplorerPersonId}
                   />
                 ) : (
                   <div className="preview-center-text p-4 text-gray-400">

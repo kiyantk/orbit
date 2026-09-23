@@ -73,7 +73,7 @@ const FacePickerPopup = ({ selection, busy, onCancel, onSelect }) => (
   </Popup>
 );
 
-const PersonPickerPopup = ({ selection, onCancel, onSelect }) => {
+const PersonPickerPopup = ({ selection, busy, onCancel, onSelect }) => {
   const [query, setQuery] = useState("");
   const matchingPeople = selection.people.filter((person, index) => (
     person.id !== selection.excludePersonId &&
@@ -84,7 +84,7 @@ const PersonPickerPopup = ({ selection, onCancel, onSelect }) => {
       title={selection.title || "Add to person"}
       width={500}
       contentWidth="92%"
-      actions={[{ label: "Cancel", kind: "secondary", onClick: onCancel }]}
+      actions={[{ label: "Cancel", kind: "secondary", onClick: onCancel, disabled: busy }]}
     >
       <p className="person-picker-description">Choose the person to add the selected face to.</p>
       <input
@@ -96,11 +96,12 @@ const PersonPickerPopup = ({ selection, onCancel, onSelect }) => {
       />
       <div className="person-target-list">
         {matchingPeople.map((person, index) => (
-          <button key={person.id} type="button" onClick={() => onSelect(person)}>
+          <button key={person.id} type="button" onClick={() => onSelect(person)} disabled={busy}>
             {person.hidden ? "Hidden — " : ""}{person.name || `Person ${index + 1}`}
           </button>
         ))}
         {!matchingPeople.length && <span>No people match your search.</span>}
+        {busy && <div className="person-picker-busy"><div className="loader" /></div>}
       </div>
     </Popup>
   );
@@ -119,7 +120,7 @@ const Cell = React.memo(
     explorerMode,
     addModeSelected,
     removeModeSelected,
-    selectedItem,
+    selectedItemIds,
     currentSettings,
     folderStatuses,
     dragJustFinishedRef,
@@ -129,7 +130,7 @@ const Cell = React.memo(
     handleMouseEnter,
     handleMouseLeave,
     handleSelect,
-    setContextMenu,
+    handleContextMenu,
     getItemName,
     columnCount,
     key,
@@ -172,7 +173,7 @@ const Cell = React.memo(
         ? "thumb-selected-addmode"
         : isInRemoveMode && removeModeSelected.has(item.id)
           ? "thumb-selected-removemode"
-          : selectedItem?.id === item.id
+          : selectedItemIds.has(item.id)
             ? "thumb-selected"
             : "thumb-item",
     ]
@@ -200,7 +201,7 @@ const Cell = React.memo(
         onDoubleClick={() => folderAvailable && handleSelect(item, "double")}
         onContextMenu={(e) => {
           e.preventDefault();
-          setContextMenu({ x: e.clientX, y: e.clientY, item });
+          handleContextMenu(e, item);
         }}
       >
         <div
@@ -282,11 +283,15 @@ const ExplorerView = ({
   explorerLoading,
   itemToReveal,
   setItemToReveal,
+  onPersonItemsRemoved,
+  activePersonId,
+  onActivePersonChange,
 }) => {
   const [totalCount, setTotalCount] = useState(null);
   const [containerWidth, setContainerWidth] = useState(1200);
   const [scale, setScale] = useState(Number(explorerScale) || 1);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [selectedItemIds, setSelectedItemIds] = useState(new Set());
   const [addModeSelected, setAddModeSelected] = useState(new Set());
   const [removeModeSelected, setRemoveModeSelected] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null);
@@ -457,6 +462,18 @@ const fetchTotalCount = useCallback(async (generation) => {
     forceUpdate((current) => current + 1);
   }, []);
 
+  const reconcileActivePerson = useCallback(async (removedItemIds = []) => {
+    if (!activePersonId) return;
+    const removedIds = new Set(removedItemIds);
+    const remainingIds = (filters?.ids || [])
+      .filter((id) => !removedIds.has(id));
+    const result = await window.electron.ipcRenderer.invoke(
+      "people:resolve-person-for-files",
+      { fileIds: remainingIds, preferredPersonId: activePersonId },
+    );
+    if (result?.success) onActivePersonChange(result.personId);
+  }, [activePersonId, filters?.ids, onActivePersonChange]);
+
   const runFaceAction = useCallback(async (action, face, targetPersonId = null, optimisticItemId = null) => {
     setFaceActionBusy(true);
     if (optimisticItemId != null) removePersonItemFromGrid(optimisticItemId);
@@ -469,6 +486,10 @@ const fetchTotalCount = useCallback(async (generation) => {
       if (!result?.success) throw new Error(result?.error || "Unable to update this face.");
       setFacePicker(null);
       setPersonPicker(null);
+      if (optimisticItemId != null) {
+        onPersonItemsRemoved([optimisticItemId]);
+        await reconcileActivePerson([optimisticItemId]);
+      }
       refreshExplorerForPeopleAction();
     } catch (error) {
       enqueueSnackbar(error.message || "Unable to update this face.", { variant: "error" });
@@ -476,15 +497,48 @@ const fetchTotalCount = useCallback(async (generation) => {
     } finally {
       setFaceActionBusy(false);
     }
-  }, [refreshExplorerForPeopleAction, removePersonItemFromGrid]);
+  }, [onPersonItemsRemoved, reconcileActivePerson, refreshExplorerForPeopleAction, removePersonItemFromGrid]);
 
-  const openPersonPickerForFace = useCallback(async (face, excludePersonId = null, title = "Add to person") => {
+  const runFaceActions = useCallback(async (action, faces, targetPersonId = null, removedItemIds = []) => {
+    setFaceActionBusy(true);
+    try {
+      for (const face of faces) {
+        const result = await window.electron.ipcRenderer.invoke("people:face-action", {
+          action,
+          faceId: face.faceId,
+          targetPersonId,
+        });
+        if (!result?.success) {
+          throw new Error(result?.error || "Unable to update selected faces.");
+        }
+      }
+      setFacePicker(null);
+      setPersonPicker(null);
+      if (removedItemIds.length) {
+        removedItemIds.forEach(removePersonItemFromGrid);
+        onPersonItemsRemoved(removedItemIds);
+        await reconcileActivePerson(removedItemIds);
+      }
+      refreshExplorerForPeopleAction();
+    } catch (error) {
+      enqueueSnackbar(error.message || "Unable to update selected faces.", { variant: "error" });
+    } finally {
+      setFaceActionBusy(false);
+    }
+  }, [onPersonItemsRemoved, reconcileActivePerson, refreshExplorerForPeopleAction, removePersonItemFromGrid]);
+
+  const openPersonPickerForFace = useCallback(async (
+    face,
+    excludePersonId = null,
+    title = "Add to person",
+    removedItemId = null,
+  ) => {
     setFaceActionBusy(true);
     try {
       const peopleResult = await window.electron.ipcRenderer.invoke("people:list");
       const people = peopleResult?.success ? peopleResult.data ?? [] : [];
       setFacePicker(null);
-      setPersonPicker({ face, people, excludePersonId, title });
+      setPersonPicker({ face, people, excludePersonId, title, removedItemId });
     } catch (error) {
       enqueueSnackbar("Unable to load people.", { variant: "error" });
     } finally {
@@ -492,20 +546,47 @@ const fetchTotalCount = useCallback(async (generation) => {
     }
   }, []);
 
-  const openPersonFacePicker = useCallback(async (action, item) => {
+  const openPersonFacePicker = useCallback(async (action, item, selectedIds = [item.id]) => {
     setContextMenu(null);
-    const activePersonId = filters?._facePersonId ?? null;
     const personId = (action === "separate" || action === "set-avatar" || action === "hide-not-face" || action === "not-same-person") ? activePersonId : null;
     try {
-      const result = await window.electron.ipcRenderer.invoke("people:list-faces", { fileId: item.id, personId });
-      const faces = result?.success ? result.data ?? [] : [];
+      const results = await Promise.all(selectedIds.map((fileId) =>
+        window.electron.ipcRenderer.invoke("people:list-faces", { fileId, personId }),
+      ));
+      const faces = results.flatMap((result) => result?.success ? result.data ?? [] : []);
       if (!faces.length) {
         enqueueSnackbar("No matching detected face was found in this item.", { variant: "warning" });
         return;
       }
+      if (selectedIds.length > 1) {
+        if (action === "not-same-person") {
+          setFaceActionBusy(true);
+          try {
+            const peopleResult = await window.electron.ipcRenderer.invoke("people:list");
+            const people = peopleResult?.success ? peopleResult.data ?? [] : [];
+            setPersonPicker({
+              targetFaces: faces,
+              people,
+              excludePersonId: activePersonId,
+              title: "Not the same person",
+              removedItemIds: selectedIds,
+            });
+          } finally {
+            setFaceActionBusy(false);
+          }
+        } else {
+          await runFaceActions(action, faces, activePersonId, selectedIds);
+        }
+        return;
+      }
       if (faces.length === 1 && action !== "add-to-person") {
         if (action === "not-same-person") {
-          await openPersonPickerForFace(faces[0], activePersonId, "Not the same person");
+          await openPersonPickerForFace(
+            faces[0],
+            activePersonId,
+            "Not the same person",
+            item.id,
+          );
         } else {
           await runFaceAction(
             action,
@@ -520,7 +601,7 @@ const fetchTotalCount = useCallback(async (generation) => {
     } catch (error) {
       enqueueSnackbar("Unable to load faces for this item.", { variant: "error" });
     }
-  }, [filters?._facePersonId, openPersonPickerForFace, runFaceAction]);
+  }, [activePersonId, openPersonPickerForFace, runFaceAction, runFaceActions]);
 
   const selectFaceForPersonAction = useCallback(async (face) => {
     if (!facePicker) return;
@@ -529,6 +610,7 @@ const fetchTotalCount = useCallback(async (generation) => {
         face,
         facePicker.action === "not-same-person" ? facePicker.activePersonId : null,
         facePicker.action === "not-same-person" ? "Not the same person" : "Add to person",
+        facePicker.action === "not-same-person" ? facePicker.item.id : null,
       );
       return;
     }
@@ -616,6 +698,7 @@ const fetchTotalCount = useCallback(async (generation) => {
     (item, type) => {
       onSelect(item, type);
       setSelectedItem(item);
+      setSelectedItemIds(item ? new Set([item.id]) : new Set());
     },
     [onSelect],
   );
@@ -623,14 +706,41 @@ const fetchTotalCount = useCallback(async (generation) => {
   const handleClick = useCallback(
     (e, item) => {
       // if (!folderStatuses[item.folder_path]) return;
-      if (e.ctrlKey) {
+      if (e.shiftKey) {
         window.electron.ipcRenderer.invoke("open-in-default-viewer", item.path);
+      } else if (e.ctrlKey) {
+        const next = new Set(selectedItemIds);
+        if (next.has(item.id)) {
+          next.delete(item.id);
+          if (!next.size) {
+            setSelectedItem(null);
+            onSelect(null, "single");
+          }
+        } else {
+          next.add(item.id);
+          setSelectedItem(item);
+          onSelect(item, "single");
+        }
+        setSelectedItemIds(next);
       } else {
         handleSelect(item, "single");
       }
     },
-    [handleSelect],
+    [handleSelect, onSelect, selectedItemIds],
   );
+
+  const handleContextMenu = useCallback((e, item) => {
+    let itemIds;
+    if (selectedItemIds.has(item.id)) {
+      itemIds = [...selectedItemIds];
+    } else {
+      itemIds = [item.id];
+      setSelectedItemIds(new Set(itemIds));
+      setSelectedItem(item);
+      onSelect(item, "single");
+    }
+    setContextMenu({ x: e.clientX, y: e.clientY, item, itemIds });
+  }, [onSelect, selectedItemIds]);
 
   const handleAddModeClick = useCallback((item) => {
     setAddModeSelected((prev) => {
@@ -1066,6 +1176,8 @@ useEffect(() => {
   // change could remove records that are no longer represented by totalCount.
   useEffect(() => {
     setRemoveModeSelected(new Set());
+    setSelectedItem(null);
+    setSelectedItemIds(new Set());
   }, [filters]);
 
   // Reset scroll on filter change
@@ -1222,6 +1334,11 @@ useEffect(() => {
         idSet.forEach((id) => next.delete(id));
         return next;
       });
+      setSelectedItemIds((prev) => {
+        const next = new Set(prev);
+        idSet.forEach((id) => next.delete(id));
+        return next;
+      });
 
       // Rebuild idToIndex
       const rebuilt = new Map();
@@ -1270,6 +1387,7 @@ useEffect(() => {
       if (e.key === "Escape") {
         e.preventDefault();
         setSelectedItem(null);
+        setSelectedItemIds(new Set());
         onSelect(null, "single");
         return;
       }
@@ -1298,8 +1416,7 @@ useEffect(() => {
 
       const nextItem = itemsRef.current[nextIndex];
       if (nextItem) {
-        setSelectedItem(nextItem);
-        onSelect(nextItem, "single");
+        handleSelect(nextItem, "single");
       }
       gridRef.current?.scrollToCell({
         rowIndex: Math.floor(nextIndex / columnCount),
@@ -1319,6 +1436,7 @@ useEffect(() => {
     columnCount,
     tagCurrentlySelected,
     actionPanelType,
+    handleSelect,
   ]);
 
   // Explorer mode: pre-populate add selection
@@ -1562,7 +1680,7 @@ useEffect(() => {
                       explorerMode={explorerMode}
                       addModeSelected={addModeSelected}
                       removeModeSelected={removeModeSelected}
-                      selectedItem={selectedItem}
+                      selectedItemIds={selectedItemIds}
                       currentSettings={currentSettings}
                       folderStatuses={folderStatuses}
                       dragJustFinishedRef={dragJustFinishedRef}
@@ -1573,7 +1691,7 @@ useEffect(() => {
                       handleMouseEnter={handleMouseEnter}
                       handleMouseLeave={handleMouseLeave}
                       handleSelect={handleSelect}
-                      setContextMenu={setContextMenu}
+                      handleContextMenu={handleContextMenu}
                       getItemName={getItemName}
                     />
                   )}
@@ -1678,8 +1796,9 @@ useEffect(() => {
           revealFromContextMenu={revealFromContextMenu}
           onRemoveItem={handleRemoveItem}
           onFindSimilar={onFindSimilar}
-          activePersonId={filters?._facePersonId ?? null}
+          activePersonId={activePersonId}
           onPersonAction={openPersonFacePicker}
+          selectedItemIds={contextMenu.itemIds}
         />
       )}
 
@@ -1695,8 +1814,21 @@ useEffect(() => {
       {personPicker && (
         <PersonPickerPopup
           selection={personPicker}
+          busy={faceActionBusy}
           onCancel={() => setPersonPicker(null)}
-          onSelect={(person) => runFaceAction("add-to-person", personPicker.face, person.id)}
+          onSelect={(person) => personPicker.targetFaces
+            ? runFaceActions(
+              "add-to-person",
+              personPicker.targetFaces,
+              person.id,
+              personPicker.removedItemIds,
+            )
+            : runFaceAction(
+              "add-to-person",
+              personPicker.face,
+              person.id,
+              personPicker.removedItemId,
+            )}
         />
       )}
 

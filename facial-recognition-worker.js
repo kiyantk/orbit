@@ -170,6 +170,7 @@ function ensureSchema() {
       `).run(FACE_PIPELINE_VERSION);
     })();
   }
+  restoreCustomAvatarCovers();
 }
 
 function refreshCounts() {
@@ -277,7 +278,12 @@ function assignFaceToPerson(faceId, personId, quality, embedding, assignedBy = "
     FROM ${PEOPLE_TABLE} p JOIN ${FACE_TABLE} f ON f.id = p.cover_face_id
     WHERE p.id = ?
   `).get(personId);
-  if (!preserveCover && (!cover || quality > (cover.quality ?? -1))) {
+  // A user-selected avatar is stored with the manual person record. Restore it
+  // explicitly in case an older automatic assignment had replaced the cover.
+  const customAvatarFaceId = getCustomAvatarFaceId(personId);
+  if (customAvatarFaceId) {
+    db.prepare(`UPDATE ${PEOPLE_TABLE} SET cover_face_id = ?, updated_at = strftime('%s', 'now') WHERE id = ?`).run(customAvatarFaceId, personId);
+  } else if (!preserveCover && (!cover || quality > (cover.quality ?? -1))) {
     db.prepare(`UPDATE ${PEOPLE_TABLE} SET cover_face_id = ?, updated_at = strftime('%s', 'now') WHERE id = ?`).run(faceId, personId);
   }
   addRepresentative(personId, faceId, quality, embedding);
@@ -417,6 +423,31 @@ function getCustomAvatarFaceId(personId) {
   `).get(personId)?.faceId ?? null;
 }
 
+function restoreCustomAvatarCovers() {
+  db.prepare(`
+    UPDATE ${PEOPLE_TABLE} AS person
+    SET cover_face_id = (
+      SELECT manual.avatar_face_id
+      FROM ${MANUAL_PERSON_TABLE} manual
+      JOIN ${MANUAL_PERSON_FACE_TABLE} manualFace
+        ON manualFace.manual_person_id = manual.id
+        AND manualFace.face_id = manual.avatar_face_id
+      JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = manualFace.face_id
+      WHERE assignment.person_id = person.id AND manual.avatar_face_id IS NOT NULL
+      LIMIT 1
+    ), updated_at = strftime('%s', 'now')
+    WHERE EXISTS (
+      SELECT 1
+      FROM ${MANUAL_PERSON_TABLE} manual
+      JOIN ${MANUAL_PERSON_FACE_TABLE} manualFace
+        ON manualFace.manual_person_id = manual.id
+        AND manualFace.face_id = manual.avatar_face_id
+      JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = manualFace.face_id
+      WHERE assignment.person_id = person.id AND manual.avatar_face_id IS NOT NULL
+    )
+  `).run();
+}
+
 function rebuildPersonRepresentatives(personId) {
   db.prepare(`DELETE FROM ${PERSON_REPRESENTATIVE_TABLE} WHERE person_id = ?`).run(personId);
   personRepresentatives.delete(personId);
@@ -432,7 +463,10 @@ function rebuildPersonRepresentatives(personId) {
     const embedding = float32FromBlob(face.embedding);
     if (embedding.length === 512) addRepresentative(personId, face.id, face.quality ?? 0, embedding);
   }
-  if (faces[0] && !getCustomAvatarFaceId(personId)) {
+  const customAvatarFaceId = getCustomAvatarFaceId(personId);
+  if (customAvatarFaceId) {
+    db.prepare(`UPDATE ${PEOPLE_TABLE} SET cover_face_id = ?, updated_at = strftime('%s', 'now') WHERE id = ?`).run(customAvatarFaceId, personId);
+  } else if (faces[0]) {
     db.prepare(`UPDATE ${PEOPLE_TABLE} SET cover_face_id = ?, updated_at = strftime('%s', 'now') WHERE id = ?`).run(faces[0].id, personId);
   }
 }
