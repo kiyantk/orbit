@@ -160,6 +160,10 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
   const [faceGridLoading, setFaceGridLoading] = useState(false);
   const [faceGridError, setFaceGridError] = useState(null);
   const [faceGridActionId, setFaceGridActionId] = useState(null);
+  const [similarPersonId, setSimilarPersonId] = useState(null);
+  const [similarPersonIds, setSimilarPersonIds] = useState([]);
+  const [similarLoading, setSimilarLoading] = useState(false);
+  const [similarError, setSimilarError] = useState(null);
   const containerRef = useRef(null);
   const faceGridRequestRef = useRef(0);
   const reviewImageDragRef = useRef(null);
@@ -220,11 +224,23 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
     (currentSettings?.showHiddenPeople || !person.hidden) && Number(person.itemCount) >= minimumPhotos
   )), [currentSettings?.showHiddenPeople, minimumPhotos, peopleWithLabels]);
 
+  const similarPerson = useMemo(() => (
+    similarPersonId == null ? null : peopleWithLabels.find((person) => person.id === similarPersonId) ?? null
+  ), [peopleWithLabels, similarPersonId]);
+
+  const peopleForCurrentFilter = useMemo(() => {
+    if (similarPersonId == null) return visiblePeople;
+    const ids = new Set(similarPersonIds);
+    return peopleWithLabels.filter((person) => (
+      (person.id === similarPersonId || ids.has(person.id)) && (currentSettings?.showHiddenPeople || !person.hidden)
+    ));
+  }, [currentSettings?.showHiddenPeople, peopleWithLabels, similarPersonId, similarPersonIds, visiblePeople]);
+
   const filteredPeople = useMemo(() => {
     const search = normaliseText(query.trim());
-    if (!search) return visiblePeople;
-    return visiblePeople.filter((person) => normaliseText(person.displayName).includes(search));
-  }, [query, visiblePeople]);
+    if (!search) return peopleForCurrentFilter;
+    return peopleForCurrentFilter.filter((person) => normaliseText(person.displayName).includes(search));
+  }, [peopleForCurrentFilter, query]);
 
   const suggestedPeople = useMemo(() => {
     if (!suggestion) return null;
@@ -381,6 +397,29 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
     setContextMenu(null);
     await managePerson(person.hidden ? "unhide" : "hide", person);
   }, [managePerson]);
+
+  const showSimilarPeople = useCallback(async (person) => {
+    setContextMenu(null);
+    setSimilarPersonId(person.id);
+    setSimilarPersonIds([]);
+    setSimilarError(null);
+    setSimilarLoading(true);
+    try {
+      const result = await window.electron.ipcRenderer.invoke("people:list-similar", { personId: person.id });
+      if (!result?.success) throw new Error(result?.error || "Unable to find similar people.");
+      setSimilarPersonIds((result.data ?? []).map((entry) => entry.personId));
+    } catch (error) {
+      setSimilarError(error.message || "Unable to find similar people.");
+    } finally {
+      setSimilarLoading(false);
+    }
+  }, []);
+
+  const clearSimilarPeople = useCallback(() => {
+    setSimilarPersonId(null);
+    setSimilarPersonIds([]);
+    setSimilarError(null);
+  }, []);
 
   const hideFaceGridPerson = useCallback(async () => {
     if (!faceGridPerson || personActionSaving || faceGridActionId) return;
@@ -598,6 +637,11 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
             {bulkMode === "merge-select" && <span>Merge {bulkPersonIds.length} {bulkPersonIds.length === 1 ? "person" : "people"} into {bulkTarget?.displayName ?? "this person"}</span>}
             {bulkMode === "hide" && <span>Hide {bulkPersonIds.length} {bulkPersonIds.length === 1 ? "person" : "people"}</span>}
           </div>
+        ) : similarPersonId != null ? (
+          <div className="people-similar-status" role="status">
+            <span>{similarLoading ? "Finding similar people..." : `Showing people similar to ${similarPerson?.displayName ?? "this person"}`}</span>
+            <button type="button" onClick={clearSimilarPeople}>Clear</button>
+          </div>
         ) : <div className="people-title"><span>People</span></div>}
         <div className="people-toolbar-actions">
           {!bulkMode && (
@@ -666,7 +710,8 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
         {loading && <div className="memories-loading"><div className="loader" /></div>}
         {!loading && unavailable && <div className="memories-empty"><p>Download Facial Recognition in Settings to find people in your library.</p></div>}
         {!loading && !unavailable && regroupError && <div className="people-regroup-error" role="alert">{regroupError}</div>}
-        {!loading && !unavailable && filteredPeople.length === 0 && <div className="memories-empty"><p>{query.trim() ? "No people match your search." : "No grouped people found yet. Facial recognition continues indexing in the background."}</p></div>}
+        {!loading && !unavailable && similarError && <div className="people-regroup-error" role="alert">{similarError}</div>}
+        {!loading && !unavailable && !similarLoading && filteredPeople.length === 0 && <div className="memories-empty"><p>{query.trim() ? "No people match your search." : similarPersonId != null ? "No similar people found." : "No grouped people found yet. Facial recognition continues indexing in the background."}</p></div>}
         {!loading && !unavailable && filteredPeople.length > 0 && size.width > 0 && (
           <Grid
             width={size.width}
@@ -691,6 +736,7 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
           onClose={() => setContextMenu(null)}
           onRename={openRenamePerson}
           onSplit={openSplitPerson}
+          onShowSimilar={showSimilarPeople}
           onToggleHidden={togglePersonHidden}
         />
       )}

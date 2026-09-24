@@ -52,6 +52,7 @@ let faceCount = 0;
 let peopleCount = 0;
 const unavailableRoots = new Set();
 const personRepresentatives = new Map();
+const hiddenPersonIds = new Set();
 
 function log(level, message) {
   parentPort.postMessage({ type: "log", level, message });
@@ -200,13 +201,16 @@ function emitProgress() {
 
 function loadPersonRepresentatives() {
   personRepresentatives.clear();
+  hiddenPersonIds.clear();
   const rows = db.prepare(`
-    SELECT r.person_id, r.face_id, f.embedding, r.quality
+    SELECT r.person_id, r.face_id, f.embedding, r.quality, p.hidden
     FROM ${PERSON_REPRESENTATIVE_TABLE} r
     JOIN ${FACE_TABLE} f ON f.id = r.face_id
+    JOIN ${PEOPLE_TABLE} p ON p.id = r.person_id
     WHERE f.embedding IS NOT NULL AND f.embedding_version = ?
   `).all(FACE_EMBEDDING_VERSION);
   for (const row of rows) {
+    if (row.hidden) hiddenPersonIds.add(row.person_id);
     const embedding = float32FromBlob(row.embedding);
     if (embedding.length !== 512) continue;
     const entries = personRepresentatives.get(row.person_id) ?? [];
@@ -236,6 +240,9 @@ function findPersonMatches(embedding) {
   let acceptedMatch = null;
   let closestMatch = null;
   for (const [personId, representatives] of personRepresentatives) {
+    // Hiding is a safety boundary: retain the existing group, but never grow
+    // it from an automatic match that the user may not see to review.
+    if (hiddenPersonIds.has(personId)) continue;
     const scores = representatives
       .map((representative) => ({ representative, score: cosineSimilarity(embedding, representative.embedding) }))
       .sort((a, b) => b.score - a.score);
@@ -480,6 +487,7 @@ function hidePeople(personIds) {
   }
   const placeholders = ids.map(() => "?").join(",");
   db.prepare(`UPDATE ${PEOPLE_TABLE} SET hidden = 1, updated_at = strftime('%s', 'now') WHERE id IN (${placeholders})`).run(...ids);
+  for (const personId of ids) hiddenPersonIds.add(personId);
   return { hidden: ids.length };
 }
 
@@ -487,6 +495,7 @@ function unhidePerson(personId) {
   const manualPersonId = ensureManualPerson(personId);
   db.prepare(`DELETE FROM ${HIDDEN_MANUAL_PERSON_TABLE} WHERE manual_person_id = ?`).run(manualPersonId);
   db.prepare(`UPDATE ${PEOPLE_TABLE} SET hidden = 0, updated_at = strftime('%s', 'now') WHERE id = ?`).run(personId);
+  hiddenPersonIds.delete(personId);
   return { hidden: false, manualPersonId };
 }
 
@@ -592,6 +601,7 @@ function applyFaceAction(action, faceId, targetPersonId = null) {
       db.prepare(`UPDATE ${FACE_ASSIGNMENT_TABLE} SET person_id = ?, assigned_by = 'manual', assigned_at = strftime('%s', 'now') WHERE face_id = ?`).run(newPersonId, faceId);
       if (action === "hide-not-face") {
         db.prepare(`INSERT INTO ${HIDDEN_MANUAL_PERSON_TABLE}(manual_person_id) VALUES (?)`).run(manualPersonId);
+        hiddenPersonIds.add(newPersonId);
       }
       rebuildPersonRepresentatives(face.personId);
       rebuildPersonRepresentatives(newPersonId);
@@ -844,6 +854,7 @@ function rebuild() {
   db.transaction(() => {
     db.exec(`DELETE FROM ${FACE_ASSIGNMENT_TABLE}; DELETE FROM ${PERSON_REPRESENTATIVE_TABLE}; DELETE FROM ${FACE_SUGGESTION_TABLE}; DELETE FROM ${IGNORED_FACE_TABLE}; DELETE FROM ${HIDDEN_MANUAL_PERSON_TABLE}; DELETE FROM ${MANUAL_PERSON_FACE_TABLE}; DELETE FROM ${PERSON_EXCLUSION_TABLE}; DELETE FROM ${MANUAL_PERSON_TABLE}; DELETE FROM ${FACE_TABLE}; DELETE FROM ${FACE_SCAN_TABLE}; DELETE FROM ${PEOPLE_TABLE};`);
   })();
+  hiddenPersonIds.clear();
   loadPersonRepresentatives();
   emitProgress();
   // Let an already-running inference finish before scheduling the next job;
@@ -854,6 +865,7 @@ function rebuild() {
 function reclusterPeople() {
   clearTimeout(loopTimer);
   personRepresentatives.clear();
+  hiddenPersonIds.clear();
 
   const faces = db.prepare(`
     SELECT face.id, face.recognition_quality AS quality, face.embedding
@@ -884,6 +896,7 @@ function reclusterPeople() {
       if (!personId) {
         personId = Number(db.prepare(`INSERT INTO ${PEOPLE_TABLE}(name, cover_face_id, hidden) VALUES (?, ?, ?)`).run(manualPerson.name, manualPerson.avatarFaceId ?? face.id, hiddenManualPeople.has(manualPersonId) ? 1 : 0).lastInsertRowid);
         manualPeople.set(manualPersonId, personId);
+        if (hiddenManualPeople.has(manualPersonId)) hiddenPersonIds.add(personId);
       }
       assignFaceToPerson(face.id, personId, face.quality ?? 0, embedding, "manual", null, manualPerson.avatarFaceId != null);
     }

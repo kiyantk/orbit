@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-const PeopleContextMenu = ({ x, y, person, disabled, onClose, onRename, onSplit, onToggleHidden }) => {
+const PeopleContextMenu = ({ x, y, person, disabled, onClose, onRename, onSplit, onShowSimilar, onToggleHidden }) => {
   const menuRef = useRef(null);
   const [position, setPosition] = useState({ left: x, top: y });
 
@@ -39,6 +39,9 @@ const PeopleContextMenu = ({ x, y, person, disabled, onClose, onRename, onSplit,
       </button>
       <button type="button" role="menuitem" onClick={() => onSplit(person)} disabled={disabled || Number(person.faceCount) < 2}>
         Split person
+      </button>
+      <button type="button" role="menuitem" onClick={() => onShowSimilar(person)} disabled={disabled}>
+        Show similar
       </button>
       <button type="button" role="menuitem" onClick={() => onToggleHidden(person)} disabled={disabled}>
         {person.hidden ? "Unhide person" : "Hide person"}

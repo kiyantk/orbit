@@ -4774,6 +4774,61 @@ ipcMain.handle("people:next-suggestion", (_event, { minimumPhotos } = {}) => {
   }
 });
 
+ipcMain.handle("people:list-similar", (_event, { personId } = {}) => {
+  try {
+    initDatabase();
+    const parsedPersonId = Number(personId);
+    if (!Number.isInteger(parsedPersonId) || ![PEOPLE_TABLE, FACE_ASSIGNMENT_TABLE, MANUAL_PERSON_FACE_TABLE, PERSON_EXCLUSION_TABLE, FACE_SUGGESTION_TABLE].every(hasDatabaseTable)) {
+      return { success: true, data: [] };
+    }
+    const data = db.prepare(`
+      WITH similar_people AS (
+        SELECT candidate.person_id AS personId, suggestion.score AS score
+        FROM ${FACE_SUGGESTION_TABLE} suggestion
+        JOIN ${FACE_ASSIGNMENT_TABLE} source ON source.face_id = suggestion.face_id
+        JOIN ${FACE_ASSIGNMENT_TABLE} candidate ON candidate.face_id = suggestion.candidate_face_id
+        WHERE source.person_id = ? AND candidate.person_id <> ?
+        UNION ALL
+        SELECT source.person_id AS personId, suggestion.score AS score
+        FROM ${FACE_SUGGESTION_TABLE} suggestion
+        JOIN ${FACE_ASSIGNMENT_TABLE} source ON source.face_id = suggestion.face_id
+        JOIN ${FACE_ASSIGNMENT_TABLE} candidate ON candidate.face_id = suggestion.candidate_face_id
+        WHERE candidate.person_id = ? AND source.person_id <> ?
+      ),
+      excluded_people AS (
+        SELECT DISTINCT
+          CASE WHEN leftAssignment.person_id = ? THEN rightAssignment.person_id ELSE leftAssignment.person_id END AS personId
+        FROM ${PERSON_EXCLUSION_TABLE} exclusion
+        JOIN ${MANUAL_PERSON_FACE_TABLE} leftFace ON leftFace.manual_person_id = exclusion.left_manual_person_id
+        JOIN ${FACE_ASSIGNMENT_TABLE} leftAssignment ON leftAssignment.face_id = leftFace.face_id
+        JOIN ${MANUAL_PERSON_FACE_TABLE} rightFace ON rightFace.manual_person_id = exclusion.right_manual_person_id
+        JOIN ${FACE_ASSIGNMENT_TABLE} rightAssignment ON rightAssignment.face_id = rightFace.face_id
+        WHERE (leftAssignment.person_id = ? OR rightAssignment.person_id = ?)
+          AND leftAssignment.person_id <> rightAssignment.person_id
+      )
+      SELECT similar.personId, MAX(similar.score) AS score
+      FROM similar_people similar
+      JOIN ${PEOPLE_TABLE} person ON person.id = similar.personId
+      LEFT JOIN excluded_people excluded ON excluded.personId = similar.personId
+      WHERE excluded.personId IS NULL
+      GROUP BY similar.personId
+      ORDER BY score DESC, similar.personId ASC
+    `).all(
+      parsedPersonId,
+      parsedPersonId,
+      parsedPersonId,
+      parsedPersonId,
+      parsedPersonId,
+      parsedPersonId,
+      parsedPersonId,
+    );
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:list-similar error:", error);
+    return { success: false, error: error.message, data: [] };
+  }
+});
+
 ipcMain.handle("people:decision", async (_event, { kind, firstPersonId, secondPersonId } = {}) => {
   try {
     if (!resourceManager?.isInstalled("facial-recognition")) {
