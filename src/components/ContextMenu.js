@@ -17,12 +17,14 @@ const ContextMenu = ({
   selectedItemIds = [],
 }) => {
   const menuRef = useRef(null);
+  const mainMenuRef = useRef(null);
   const [showTags, setShowTags] = useState(false);
   const [showPerson, setShowPerson] = useState(false);
   const [tags, setTags] = useState([]);
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [hasEmbedding, setHasEmbedding] = useState(false);
   const [position, setPosition] = useState({ left: x, top: y });
+  const [mainMenuHeight, setMainMenuHeight] = useState(0);
   const itemIds = selectedItemIds.length ? selectedItemIds : [item.id];
   const isMultiSelection = itemIds.length > 1;
 
@@ -50,6 +52,23 @@ const ContextMenu = ({
     window.addEventListener("resize", updatePosition);
     return () => window.removeEventListener("resize", updatePosition);
   }, [x, y, showTags, showPerson]);
+
+  useLayoutEffect(() => {
+    const menu = mainMenuRef.current;
+    if (!menu) return undefined;
+
+    const updateHeight = () => {
+      const nextHeight = menu.offsetHeight;
+      setMainMenuHeight((current) =>
+        current === nextHeight ? current : nextHeight,
+      );
+    };
+
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(menu);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -127,6 +146,7 @@ const ContextMenu = ({
     >
       {/* Main context menu */}
       <div
+        ref={mainMenuRef}
         style={{
           minWidth: 150,
           padding: "6px 0px 24px 0px",
@@ -218,7 +238,9 @@ const ContextMenu = ({
           className="context-menu-submenu"
           style={{
             minWidth: 200,
-            maxHeight: 200,
+            height: mainMenuHeight || undefined,
+            maxHeight: mainMenuHeight || 200,
+            boxSizing: "border-box",
             overflowY: "auto",
             backgroundColor: "#2d2a35",
             borderLeft: "1px solid #3a3645",

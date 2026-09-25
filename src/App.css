@@ -1633,6 +1633,27 @@ select:focus {
   box-sizing: border-box;
 }
 
+.memory-virtualizer {
+  width: calc(100% + 40px);
+  height: calc(100% + 40px);
+  margin: -20px;
+}
+
+.memory-virtualizer .ReactVirtualized__Grid {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.memory-virtualizer .ReactVirtualized__Grid__innerScrollContainer {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+.memory-virtualizer.list-layout .memory-box {
+  right: 20px;
+  width: auto !important;
+}
+
 /* LIST MODE */
 .memories-grid.list-layout {
   grid-template-columns: 1fr;
@@ -3298,6 +3319,11 @@ input[type="checkbox"] {
 .people-context-menu button:focus-visible:not(:disabled) {
   outline: 0;
   background: #2d2a35;
+}
+
+.people-context-menu .context-menu-submenu .context-menu-item:hover {
+  background: #1c1a22;
+  cursor: pointer;
 }
 
 .people-context-menu button:disabled {

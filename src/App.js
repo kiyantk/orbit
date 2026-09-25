@@ -550,7 +550,17 @@ const App = () => {
           {activeView === "people" && (
             <PeopleView
               currentSettings={settings}
-              onViewPerson={(person) => {
+              onViewPerson={(person, view = "explore") => {
+                if (view === "shuffle") {
+                  setShuffleFilters({ ids: person.fileIds });
+                  setActiveView("shuffle");
+                  return;
+                }
+                if (view === "map") {
+                  setMapFilters({ ids: person.fileIds });
+                  setActiveView("map");
+                  return;
+                }
                 setFilters({
                   ids: person.fileIds,
                   _facePersonId: person.id,

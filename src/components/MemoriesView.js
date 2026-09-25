@@ -1,8 +1,16 @@
 import { faArrowRight } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { Grid } from "react-virtualized";
 import { SnackbarProvider, enqueueSnackbar } from "notistack";
 import Popup from "./Popup";
+import "react-virtualized/styles.css";
+
+const MEMORY_CARD_SIZE = 200;
+const MEMORY_LIST_CARD_HEIGHT = 92;
+const MEMORY_GRID_GAP = 16;
+const MEMORY_CONTENT_PADDING = 20;
+const MEMORY_SCROLLBAR_GUTTER = 20;
 
 const ThumbnailStrip = React.memo(({ thumbnails = [] }) => (
   <div className="memory-thumbs">
@@ -81,6 +89,102 @@ const useFitTitles = (deps) => {
   return ref;
 };
 
+const fitMemoryTitle = (card) => {
+  const title = card?.querySelector(".memory-text .title");
+  if (!title) return;
+
+  const MAX_PX = 18;
+  const MIN_PX = 14;
+  const STEP = 0.5;
+  title.style.fontSize = `${MAX_PX}px`;
+  if (title.scrollWidth <= title.offsetWidth) return;
+
+  let lo = MIN_PX;
+  let hi = MAX_PX - STEP;
+  let best = MIN_PX;
+  while (lo <= hi) {
+    const mid = parseFloat(((lo + hi) / 2).toFixed(1));
+    title.style.fontSize = `${mid}px`;
+    if (title.scrollWidth <= title.offsetWidth) {
+      best = mid;
+      lo = mid + STEP;
+    } else {
+      hi = mid - STEP;
+    }
+  }
+  title.style.fontSize = `${best}px`;
+};
+
+const MemoryBox = React.memo(({ memoryLayout, title, children, ...props }) => {
+  const cardRef = useRef(null);
+
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card || memoryLayout !== "grid") return;
+
+    fitMemoryTitle(card);
+    const observer = new ResizeObserver(() => fitMemoryTitle(card));
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, [memoryLayout, title]);
+
+  return <div {...props} ref={cardRef}>{children}</div>;
+});
+
+const VirtualizedMemoryGrid = ({ memoryLayout, items, width, height, renderItem }) => {
+  const contentWidth = Math.max(0, width - MEMORY_CONTENT_PADDING * 2);
+  const columnCount = useMemo(() => {
+    if (memoryLayout === "list") return 1;
+    return Math.max(1, Math.floor((contentWidth + MEMORY_GRID_GAP) / (MEMORY_CARD_SIZE + MEMORY_GRID_GAP)));
+  }, [contentWidth, memoryLayout]);
+  const rowCount = Math.ceil(items.length / columnCount);
+  const cardHeight = memoryLayout === "grid" ? MEMORY_CARD_SIZE : MEMORY_LIST_CARD_HEIGHT;
+  const rowHeight = useCallback(
+    ({ index }) => (
+      index === rowCount - 1
+        ? cardHeight + MEMORY_CONTENT_PADDING * 2
+        : cardHeight + MEMORY_GRID_GAP
+    ),
+    [cardHeight, rowCount],
+  );
+  const gridWidth = columnCount * MEMORY_CARD_SIZE + (columnCount - 1) * MEMORY_GRID_GAP;
+  const horizontalOffset = memoryLayout === "grid"
+    ? MEMORY_CONTENT_PADDING + Math.max(0, Math.floor((contentWidth - gridWidth) / 2))
+    : MEMORY_CONTENT_PADDING;
+  const cellRenderer = useCallback(
+    ({ columnIndex, rowIndex, key, style }) => {
+      const index = rowIndex * columnCount + columnIndex;
+      if (index >= items.length) return null;
+      return renderItem(items[index], index, key, {
+        ...style,
+        top: style.top + MEMORY_CONTENT_PADDING,
+        left: memoryLayout === "grid" ? horizontalOffset + columnIndex * (MEMORY_CARD_SIZE + MEMORY_GRID_GAP) : horizontalOffset,
+        width: memoryLayout === "grid" ? MEMORY_CARD_SIZE : Math.max(0, contentWidth - MEMORY_SCROLLBAR_GUTTER),
+        height: cardHeight,
+      });
+    },
+    [cardHeight, columnCount, contentWidth, horizontalOffset, items, memoryLayout, renderItem],
+  );
+
+  if (!width || !height) return null;
+  return (
+    <div className={`memory-virtualizer ${memoryLayout}-layout`}>
+      <Grid
+        width={width}
+        height={height}
+        columnCount={columnCount}
+        columnWidth={memoryLayout === "grid" ? MEMORY_CARD_SIZE + MEMORY_GRID_GAP : width}
+        rowCount={rowCount}
+        rowHeight={rowHeight}
+        cellRenderer={cellRenderer}
+        overscanRowCount={2}
+        overscanColumnCount={1}
+        style={{ outline: "none", overflowX: "hidden" }}
+      />
+    </div>
+  );
+};
+
 const MemoriesView = ({
   switchMemoryMode,
   memoryMode,
@@ -133,17 +237,24 @@ const MemoriesView = ({
     existing: null,
   });
 
-  const gridRef = useFitTitles([
-    customMemories,
-    years,
-    months,
-    trips,
-    vacations,
-    onThisDay,
-    selectedTab,
-    memoryLayout,
-    loading,
-  ]);
+  const gridRef = useRef(null);
+  const [gridSize, setGridSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const container = gridRef.current;
+    if (!container) return;
+
+    const resize = ([entry]) => {
+      const { width, height } = entry.contentRect;
+      setGridSize({
+        width: width + MEMORY_CONTENT_PADDING * 2,
+        height: height + MEMORY_CONTENT_PADDING * 2,
+      });
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   const getMemoryBoxStyle = (thumbnails = []) => {
     if (memoryLayout !== "grid") return {};
@@ -324,28 +435,30 @@ const MemoriesView = ({
       }
 
       // Find which card the cursor is over and which half
-      const grid = document.querySelector(".memories-grid");
+      const grid = document.querySelector(".memory-virtualizer");
       if (!grid) return;
-      const cards = Array.from(grid.querySelectorAll(".memory-box"));
+      const cards = Array.from(grid.querySelectorAll("[data-memory-index]"))
+        .sort((left, right) => Number(left.dataset.memoryIndex) - Number(right.dataset.memoryIndex));
+      if (!cards.length) return;
 
-      let toIndex = cards.length - 1;
+      let toIndex = Number(cards[cards.length - 1].dataset.memoryIndex);
       let edge = "bottom";
 
       for (let i = 0; i < cards.length; i++) {
         const rect = cards[i].getBoundingClientRect();
         if (ev.clientY < rect.top + rect.height / 2) {
-          toIndex = i;
+          toIndex = Number(cards[i].dataset.memoryIndex);
           edge = "top";
           break;
         } else if (ev.clientY < rect.bottom) {
-          toIndex = i;
+          toIndex = Number(cards[i].dataset.memoryIndex);
           edge = "bottom";
           break;
         }
       }
 
       const insertAt = edge === "top" ? toIndex : toIndex + 1;
-      const maxInsert = cards.length - 1;
+      const maxInsert = Number(cards[cards.length - 1].dataset.memoryIndex);
       const clampedInsert = Math.min(insertAt, maxInsert);
 
       drag.current.toIndex = clampedInsert;
@@ -393,73 +506,52 @@ const MemoriesView = ({
 
   // --- MEMORY BOX RENDERING ---
   const renderYearBoxes = () => (
-    <div
-      className={`memories-grid ${memoryLayout === "grid" ? "grid-layout" : "list-layout"}`}
-    >
-      {years.map((y) => (
-        <div
-          key={y.year}
-          className="memory-box"
-          style={getMemoryBoxStyle(y.thumbnails)}
-          onClick={() => {
-            onViewMemory(y.ids);
-          }}
-        >
+    <VirtualizedMemoryGrid memoryLayout={memoryLayout} items={years} {...gridSize}
+      renderItem={(y, _index, key, style) => (
+        <MemoryBox key={key} memoryLayout={memoryLayout} title={y.year}
+          className="memory-box" style={{ ...style, ...getMemoryBoxStyle(y.thumbnails) }}
+          onClick={() => onViewMemory(y.ids)}>
           <div className="memory-text">
             <div className="title">{y.year}</div>
             <div className="description">All media from {y.year}</div>
           </div>
           <ThumbnailStrip thumbnails={y.thumbnails} />
           <div className="memory-count">{y.total} items</div>
-        </div>
-      ))}
-    </div>
+        </MemoryBox>
+      )}
+    />
   );
 
   const renderMonthBoxes = () => (
-    <div
-      className={`memories-grid ${memoryLayout === "grid" ? "grid-layout" : "list-layout"}`}
-    >
-      {months.map((m) => {
+    <VirtualizedMemoryGrid memoryLayout={memoryLayout} items={months} {...gridSize}
+      renderItem={(m, _index, key, style) => {
         const date = new Date(`${m.year}-${m.month}-01`);
         const label = date.toLocaleString("en-US", {
           month: "long",
           year: "numeric",
         });
         return (
-          <div
-            key={`${m.year}-${m.month}`}
-            className="memory-box"
-            style={getMemoryBoxStyle(m.thumbnails)}
-            onClick={() => {
-              onViewMemory(m.ids);
-            }}
-          >
+          <MemoryBox key={key} memoryLayout={memoryLayout} title={label}
+            className="memory-box" style={{ ...style, ...getMemoryBoxStyle(m.thumbnails) }}
+            onClick={() => onViewMemory(m.ids)}>
             <div className="memory-text">
               <div className="title">{label}</div>
               <div className="description">All media from {label}</div>
             </div>
             <ThumbnailStrip thumbnails={m.thumbnails} />
             <div className="memory-count">{m.total} items</div>
-          </div>
+          </MemoryBox>
         );
-      })}
-    </div>
+      }}
+    />
   );
 
   const renderVacationBoxes = () => (
-    <div
-      className={`memories-grid ${memoryLayout === "grid" ? "grid-layout" : "list-layout"}`}
-    >
-      {vacations.map((t) => (
-        <div
-          key={t.id}
-          className="memory-box"
-          style={getMemoryBoxStyle(t.thumbnails)}
-          onClick={() => {
-            onViewMemory(t.ids);
-          }}
-        >
+    <VirtualizedMemoryGrid memoryLayout={memoryLayout} items={vacations} {...gridSize}
+      renderItem={(t, _index, key, style) => (
+        <MemoryBox key={key} memoryLayout={memoryLayout} title={t.title}
+          className="memory-box" style={{ ...style, ...getMemoryBoxStyle(t.thumbnails) }}
+          onClick={() => onViewMemory(t.ids)}>
           <div className="memory-text">
             <div className="title">{t.title}</div>
             <div className="description">
@@ -469,24 +561,17 @@ const MemoriesView = ({
           </div>
           <ThumbnailStrip thumbnails={t.thumbnails} />
           <div className="memory-count">{t.total} items</div>
-        </div>
-      ))}
-    </div>
+        </MemoryBox>
+      )}
+    />
   );
 
   const renderTripBoxes = () => (
-    <div
-      className={`memories-grid ${memoryLayout === "grid" ? "grid-layout" : "list-layout"}`}
-    >
-      {trips.map((t) => (
-        <div
-          key={t.id}
-          className="memory-box"
-          style={getMemoryBoxStyle(t.thumbnails)}
-          onClick={() => {
-            onViewMemory(t.ids);
-          }}
-        >
+    <VirtualizedMemoryGrid memoryLayout={memoryLayout} items={trips} {...gridSize}
+      renderItem={(t, _index, key, style) => (
+        <MemoryBox key={key} memoryLayout={memoryLayout} title={t.title}
+          className="memory-box" style={{ ...style, ...getMemoryBoxStyle(t.thumbnails) }}
+          onClick={() => onViewMemory(t.ids)}>
           <div className="memory-text">
             <div className="title">{t.title}</div>
             <div className="description">
@@ -496,16 +581,14 @@ const MemoriesView = ({
           </div>
           <ThumbnailStrip thumbnails={t.thumbnails} />
           <div className="memory-count">{t.total} items</div>
-        </div>
-      ))}
-    </div>
+        </MemoryBox>
+      )}
+    />
   );
 
   const renderCustomMemories = () => (
-    <div
-      className={`memories-grid ${memoryLayout === "grid" ? "grid-layout" : "list-layout"}`}
-    >
-      {customMemories.map((m, index) => {
+    <VirtualizedMemoryGrid memoryLayout={memoryLayout} items={customMemories} {...gridSize}
+      renderItem={(m, index, key, style) => {
         const isDragging = dragIndex === index;
         const dropClass =
           dropEdge &&
@@ -518,10 +601,14 @@ const MemoriesView = ({
             : "";
 
         return (
-          <div
-            key={m.id}
+          <MemoryBox
+            key={key}
+            memoryLayout={memoryLayout}
+            title={m.title}
+            data-memory-index={index}
             className={`memory-box${isDragging ? " memory-box--dragging" : ""}${dropClass}`}
             style={{
+              ...style,
               ...getMemoryBoxStyle(m.thumbnails),
               cursor: dragIndex === index ? "grabbing" : "pointer",
             }}
@@ -555,10 +642,10 @@ const MemoriesView = ({
             </div>
             <ThumbnailStrip thumbnails={m.thumbnails} />
             <div className="memory-count">{m.total} items</div>
-          </div>
+          </MemoryBox>
         );
-      })}
-    </div>
+      }}
+    />
   );
 
   const renderOnThisDay = () => {
@@ -577,19 +664,19 @@ const MemoriesView = ({
     }
 
     return (
-      <div
-        className={`memories-grid ${memoryLayout === "grid" ? "grid-layout" : "list-layout"}`}
-      >
-        {onThisDay.map((entry) => {
+      <VirtualizedMemoryGrid memoryLayout={memoryLayout} items={onThisDay} {...gridSize}
+        renderItem={(entry, _index, key, style) => {
           const yearsAgo = today.getFullYear() - entry.year;
           const yearsAgoLabel =
             yearsAgo === 1 ? "1 year ago" : `${yearsAgo} years ago`;
 
           return (
-            <div
-              key={entry.year}
+            <MemoryBox
+              key={key}
+              memoryLayout={memoryLayout}
+              title={entry.year}
               className="memory-box"
-              style={getMemoryBoxStyle(entry.thumbnails)}
+              style={{ ...style, ...getMemoryBoxStyle(entry.thumbnails) }}
               onClick={() => onViewMemory(entry.ids)}
             >
               <div className="memory-text">
@@ -600,10 +687,10 @@ const MemoriesView = ({
               </div>
               <ThumbnailStrip thumbnails={entry.thumbnails} />
               <div className="memory-count">{entry.total} items</div>
-            </div>
+            </MemoryBox>
           );
-        })}
-      </div>
+        }}
+      />
     );
   };
 
@@ -740,6 +827,55 @@ const MemoriesView = ({
     );
   };
 
+  const renderVirtualizedAllBoxes = () => {
+    const items = [
+      ...customMemories.map((data) => ({ type: "custom", data, ts: data.created * 1000 })),
+      ...years.map((data) => ({ type: "year", data, ts: new Date(`${data.year}-12-01`).getTime() })),
+      ...months.map((data) => ({ type: "month", data, ts: new Date(`${data.year}-${data.month}-01`).getTime() })),
+      ...trips.map((data) => ({ type: "trip", data, ts: new Date(data.start).getTime() })),
+    ].sort((left, right) => right.ts - left.ts);
+
+    return (
+      <VirtualizedMemoryGrid memoryLayout={memoryLayout} items={items} {...gridSize}
+        renderItem={(item, _index, key, style) => {
+          const { data } = item;
+          const isCustom = item.type === "custom";
+          const title = item.type === "month"
+            ? new Date(`${data.year}-${data.month}-01`).toLocaleString("en-US", { month: "long", year: "numeric" })
+            : item.type === "year" ? data.year : data.title;
+          const description = item.type === "year"
+            ? `All media from ${data.year}`
+            : item.type === "month"
+              ? `All media from ${title}`
+              : item.type === "trip"
+                ? <>{data.start.slice(0, 10)} <FontAwesomeIcon icon={faArrowRight} /> {data.end.slice(0, 10)}</>
+                : data.description;
+          const openItem = () => {
+            if (!isCustom) return onViewMemory(data.ids);
+            const mediaIds = JSON.parse(data.media_ids || "[]");
+            if (memoryMode !== "edit" && mediaIds.length > 0) return onViewMemory(mediaIds);
+            if (memoryMode !== "edit") return;
+            setNewMemory({ id: data.id, title: data.title, description: data.description, color: data.color, existing: mediaIds });
+            setShowAddMemory(true);
+          };
+
+          return (
+            <MemoryBox key={key} memoryLayout={memoryLayout} title={title} className="memory-box"
+              style={{ ...style, ...getMemoryBoxStyle(data.thumbnails) }} onClick={openItem}>
+              {isCustom && <div className="memory-color" style={{ backgroundColor: data.color }} />}
+              <div className="memory-text">
+                <div className="title">{title}</div>
+                <div className="description">{description}</div>
+              </div>
+              <ThumbnailStrip thumbnails={data.thumbnails} />
+              <div className="memory-count">{data.total} items</div>
+            </MemoryBox>
+          );
+        }}
+      />
+    );
+  };
+
   // --- HANDLE SAVE MEMORY ---
   const handleSaveMemory = async () => {
     try {
@@ -807,7 +943,7 @@ const MemoriesView = ({
               <div className="loader"></div>
             </div>
           )}
-          {!loading && selectedTab === "All" && renderAllBoxes()}
+          {!loading && selectedTab === "All" && renderVirtualizedAllBoxes()}
           {!loading && selectedTab === "Years" && renderYearBoxes()}
           {!loading && selectedTab === "Months" && renderMonthBoxes()}
           {!loading && selectedTab === "Custom" && renderCustomMemories()}

@@ -738,6 +738,7 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
           onSplit={openSplitPerson}
           onShowSimilar={showSimilarPeople}
           onToggleHidden={togglePersonHidden}
+          onViewWith={onViewPerson}
         />
       )}
       {faceGridPerson && (

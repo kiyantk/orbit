@@ -476,7 +476,7 @@ const ActionPanel = ({
   const [sortOrder, setSortOrder] = useState(DEFAULT_SORT.sortOrder);
   const [searchBy, setSearchBy] = useState(DEFAULT_SEARCH.searchBy);
   const [searchTerm, setSearchTerm] = useState(DEFAULT_SEARCH.searchTerm);
-  const [prevActionPanelKey, setPrevActionPanelKey] = useState(0);
+  const [prevActionPanelKey, setPrevActionPanelKey] = useState(actionPanelKey);
   const skipNextApplyRef = useRef(false);
 
   const [shuffleSettings, setShuffleSettings] = useState(
