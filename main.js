@@ -24,20 +24,28 @@ const OcrService = require("./ocr-service");
 const FacialRecognitionService = require("./facial-recognition-service");
 const { ResourceManager } = require("./resource-manager");
 const {
+  LOCATION_METADATA_TABLE,
   getLocationGeocoderVersion,
   normalizeLocationSelectionMode,
 } = require("./location-schema");
-const { OCR_FTS_TABLE, OCR_INDEX_TABLE } = require("./ocr-schema");
 const {
+  OCR_FTS_TABLE,
+  OCR_INDEX_TABLE,
+  OCR_METADATA_TABLE,
+} = require("./ocr-schema");
+const {
+  FACE_METADATA_TABLE,
   FACE_SCAN_TABLE,
   FACE_TABLE,
   PEOPLE_TABLE,
   FACE_ASSIGNMENT_TABLE,
   PERSON_REPRESENTATIVE_TABLE,
+  MANUAL_PERSON_TABLE,
   MANUAL_PERSON_FACE_TABLE,
   PERSON_EXCLUSION_TABLE,
   FACE_SUGGESTION_TABLE,
   IGNORED_FACE_TABLE,
+  HIDDEN_MANUAL_PERSON_TABLE,
 } = require("./facial-recognition-schema");
 const crypto = require("crypto");
 const { parse } = require("csv-parse/sync");
@@ -3000,23 +3008,58 @@ ipcMain.handle("get-storage-usage", async () => {
     const thumbSize = getDirectorySize(thumbsPath);
     const resourcesSize = getDirectorySize(resourcesPath);
 
-    // Per-table row counts + byte estimates via dbstat
-    const tableNames = [
-      "files",
-      "memories",
-      "tags",
-      "locations",
-      "embeddings",
-      "removed_files",
+    // Per-feature row counts + byte estimates via dbstat. Some features use
+    // multiple tables, so expose them as one storage category in the UI.
+    const tableGroups = [
+      { key: "files", rowTable: "files", tableNames: ["files"] },
+      { key: "memories", rowTable: "memories", tableNames: ["memories"] },
+      { key: "tags", rowTable: "tags", tableNames: ["tags"] },
+      {
+        key: "locations",
+        rowTable: "locations",
+        tableNames: ["locations", LOCATION_METADATA_TABLE],
+      },
+      { key: "embeddings", rowTable: "embeddings", tableNames: ["embeddings"] },
+      {
+        key: "text_recognition",
+        rowTable: OCR_INDEX_TABLE,
+        tableNames: [OCR_INDEX_TABLE, OCR_METADATA_TABLE],
+        tablePrefixes: [`${OCR_FTS_TABLE}_`],
+      },
+      {
+        key: "facial_recognition",
+        rowTable: FACE_TABLE,
+        tableNames: [
+          FACE_METADATA_TABLE,
+          FACE_SCAN_TABLE,
+          FACE_TABLE,
+          PEOPLE_TABLE,
+          FACE_ASSIGNMENT_TABLE,
+          PERSON_REPRESENTATIVE_TABLE,
+          MANUAL_PERSON_TABLE,
+          MANUAL_PERSON_FACE_TABLE,
+          PERSON_EXCLUSION_TABLE,
+          FACE_SUGGESTION_TABLE,
+          IGNORED_FACE_TABLE,
+          HIDDEN_MANUAL_PERSON_TABLE,
+        ],
+      },
+      {
+        key: "removed_files",
+        rowTable: "removed_files",
+        tableNames: ["removed_files"],
+      },
     ];
     const tables = {};
 
-    for (const t of tableNames) {
+    for (const group of tableGroups) {
       try {
-        const row = db.prepare(`SELECT COUNT(*) as count FROM ${t}`).get();
-        tables[t] = { rows: row?.count ?? 0, bytes: 0 };
+        const row = db
+          .prepare(`SELECT COUNT(*) as count FROM ${group.rowTable}`)
+          .get();
+        tables[group.key] = { rows: row?.count ?? 0, bytes: 0 };
       } catch {
-        tables[t] = { rows: 0, bytes: 0 };
+        tables[group.key] = { rows: 0, bytes: 0 };
       }
     }
 
@@ -3032,7 +3075,14 @@ ipcMain.handle("get-storage-usage", async () => {
         )
         .all();
       for (const r of statRows) {
-        if (tables[r.name]) tables[r.name].bytes = r.payload_bytes ?? 0;
+        const group = tableGroups.find(
+          ({ tableNames, tablePrefixes = [] }) =>
+            tableNames.includes(r.name) ||
+            tablePrefixes.some((prefix) => r.name.startsWith(prefix)),
+        );
+        if (group) {
+          tables[group.key].bytes += r.payload_bytes ?? 0;
+        }
       }
     } catch {
       // dbstat not available — bytes stay 0

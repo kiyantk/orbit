@@ -1830,6 +1830,17 @@ const SettingsView = ({
                       label: "Smart Search",
                       color: "#60a5fa",
                     },
+                    { key: "locations", label: "Places", color: "#f59e0b" },
+                    {
+                      key: "text_recognition",
+                      label: "Text Recognition",
+                      color: "rgb(109 124 131)",
+                    },
+                    {
+                      key: "facial_recognition",
+                      label: "Facial Recognition",
+                      color: "rgb(225 251 113)",
+                    },
                     { key: "memories", label: "Memories", color: "#f472b6" },
                     { key: "tags", label: "Tags", color: "#34d399" },
                     {
@@ -1848,8 +1859,7 @@ const SettingsView = ({
                       ),
                   );
 
-                  // Bar excludes App Total (which is just dbSize + thumbSize, not additive)
-                  const segments = [
+                  const databaseSegments = [
                     ...tableDefs.map((d) => ({
                       label: d.label,
                       color: d.color,
@@ -1860,11 +1870,19 @@ const SettingsView = ({
                       color: "#afafaf",
                       bytes: dbOtherBytes,
                     },
-                    { label: "Thumbnails", color: "#fbbf24", bytes: thumbSize },
-                    { label: "Resources", color: "#22c55e", bytes: resourcesSize },
                   ].filter((s) => s.bytes > 0);
 
+                  const storageSegments = [
+                    { label: "Thumbnails", color: "#fbbf24", bytes: thumbSize },
+                    { label: "Resources", color: "#22c55e", bytes: resourcesSize },
+                    { label: "Database", color: "#afafaf", bytes: dbSize },
+                  ].filter((s) => s.bytes > 0);
+
+                  // The full distribution bar excludes App Total, which is the
+                  // parent total rather than an additive segment.
+                  const segments = [...databaseSegments, ...storageSegments];
                   const total = dbSize + thumbSize + resourcesSize || 1;
+                  const databaseTotal = dbSize || 1;
 
                   const topItems = [
                     {
@@ -1872,11 +1890,11 @@ const SettingsView = ({
                       label: "App Total",
                       val: appStorageUsed,
                     },
-                    { color: "#fbbf24", label: "Thumbnails", val: thumbSize }, // matches bar segment color
-                    { color: "#22c55e", label: "Resources", val: resourcesSize },
                   ];
 
-                  const midItems = [
+                  const storageItems = [
+                    { color: "#fbbf24", label: "Thumbnails", val: thumbSize },
+                    { color: "#22c55e", label: "Resources", val: resourcesSize },
                     { color: "#afafaf", label: "Database", val: dbSize },
                   ];
 
@@ -1899,37 +1917,41 @@ const SettingsView = ({
                     />
                   );
 
+                  const renderBar = (barSegments, barTotal, marginTop = 8) => (
+                    <div
+                      style={{
+                        display: "flex",
+                        height: 10,
+                        borderRadius: 6,
+                        overflow: "hidden",
+                        marginTop,
+                        width: "40%",
+                        gap: 2,
+                        marginBottom: 6,
+                      }}
+                    >
+                      {barSegments.map((segment) => (
+                        <div
+                          key={segment.label}
+                          title={`${segment.label}: ${formatBytes(segment.bytes)}`}
+                          style={{
+                            width: `${(segment.bytes / barTotal) * 100}%`,
+                            backgroundColor: segment.color,
+                            minWidth: segment.bytes > 0 ? 3 : 0,
+                            transition: "width 0.3s ease",
+                          }}
+                        />
+                      ))}
+                    </div>
+                  );
+
                   return (
                     <>
                       {/* Distribution bar — db segments + thumbnails, no "App Total" wrapper */}
-                      <div
-                        style={{
-                          display: "flex",
-                          height: 10,
-                          borderRadius: 6,
-                          overflow: "hidden",
-                          marginTop: 12,
-                          width: "40%",
-                          gap: 2,
-                        }}
-                      >
-                        {segments.map((s, i) => (
-                          <div
-                            key={i}
-                            title={`${s.label}: ${formatBytes(s.bytes)}`}
-                            style={{
-                              width: `${(s.bytes / total) * 100}%`,
-                              backgroundColor: s.color,
-                              minWidth: s.bytes > 0 ? 3 : 0,
-                              transition: "width 0.3s ease",
-                            }}
-                          />
-                        ))}
-                      </div>
+                      {renderBar(segments, total, 12)}
                       {/* Legend */}
                       <div
                         className="storage-bar-container"
-                        style={{ marginTop: 12 }}
                       >
                         <div className="storage-legend">
                           {/* App Total */}
@@ -1949,8 +1971,9 @@ const SettingsView = ({
                             }}
                           />
 
-                          {/* Database + Thumbnails */}
-                          {midItems.map(({ color, label, val }) => (
+                          {/* Direct children of App Total */}
+                          {renderBar(storageSegments, total)}
+                          {storageItems.map(({ color, label, val }) => (
                             <span key={label} className="storage-legend-text">
                               {dot(color)}
                               {label}: {val > 0 ? formatBytes(val) : "0 Bytes"}
@@ -1967,6 +1990,7 @@ const SettingsView = ({
                           />
 
                           {/* Per-table breakdown */}
+                          {renderBar(databaseSegments, databaseTotal)}
                           {tableItems.map(({ color, label, val, rows }) => (
                             <span key={label} className="storage-legend-text">
                               {dot(color)}
@@ -2018,6 +2042,20 @@ const SettingsView = ({
                   ],
                 },
                 {
+                  label: "Select or deselect additional items:",
+                  keys: [
+                    <ShortcutKey key="ctrl-select">CTRL</ShortcutKey>,
+                    <span>+</span>,
+                    <ShortcutKey key="lmb3">Left Mouse Button</ShortcutKey>,
+                  ],
+                },
+                {
+                  label: "Open item context menu:",
+                  keys: [
+                    <ShortcutKey key="rmb">Right Mouse Button</ShortcutKey>,
+                  ],
+                },
+                {
                   label: "Navigate:",
                   keys: [
                     <ShortcutKey key="scroll">SCROLL</ShortcutKey>,
@@ -2039,8 +2077,86 @@ const SettingsView = ({
                   ],
                 },
                 {
-                  label: "Assign last used tag to selected item:",
+                  label: "Jump through dates with the timeline (when enabled):",
+                  keys: [
+                    <ShortcutKey key="timeline">Click or Drag</ShortcutKey>,
+                  ],
+                },
+                {
+                  label: "Select all / deselect all in Add Media mode:",
+                  keys: [
+                    <ShortcutKey key="ctrl-all">CTRL</ShortcutKey>,
+                    <span>+</span>,
+                    <ShortcutKey key="a">A</ShortcutKey>,
+                  ],
+                },
+                {
+                  label: "Toggle several items in Add Media or Remove mode:",
+                  keys: [<ShortcutKey key="drag-select">Drag</ShortcutKey>],
+                },
+                {
+                  label: "Clear selection / close fullscreen:",
+                  keys: [<ShortcutKey key="escape">ESC</ShortcutKey>],
+                },
+                {
+                  label: "Toggle last used tag on selected item:",
                   keys: [<ShortcutKey key="t">T</ShortcutKey>],
+                },
+              ].map(({ label, keys }) => (
+                <SettingsRow key={label}>
+                  <span>{label}</span> {keys}
+                </SettingsRow>
+              ))}
+              <br />
+              <h3>Preview</h3>
+              {[
+                {
+                  label: "Play / pause selected video:",
+                  keys: [<ShortcutKey key="space">SPACE</ShortcutKey>],
+                },
+                {
+                  label: "Zoom a fullscreen image:",
+                  keys: [<ShortcutKey key="image-scroll">SCROLL</ShortcutKey>],
+                },
+                {
+                  label: "Pan a zoomed fullscreen image:",
+                  keys: [<ShortcutKey key="drag">Drag</ShortcutKey>],
+                },
+                {
+                  label: "Reset fullscreen image zoom:",
+                  keys: [
+                    <ShortcutKey key="image-dblclick">
+                      Double Left Mouse Button
+                    </ShortcutKey>,
+                  ],
+                },
+              ].map(({ label, keys }) => (
+                <SettingsRow key={label}>
+                  <span>{label}</span> {keys}
+                </SettingsRow>
+              ))}
+              <br />
+              <h3>People</h3>
+              {[
+                {
+                  label: "View a person's media in Explorer:",
+                  keys: [
+                    <ShortcutKey key="people-view">Left Mouse Button</ShortcutKey>,
+                  ],
+                },
+                {
+                  label: "Open a person's face grid:",
+                  keys: [
+                    <ShortcutKey key="people-ctrl">CTRL</ShortcutKey>,
+                    <span>+</span>,
+                    <ShortcutKey key="people-lmb">Left Mouse Button</ShortcutKey>,
+                  ],
+                },
+                {
+                  label: "Open person context menu:",
+                  keys: [
+                    <ShortcutKey key="people-rmb">Right Mouse Button</ShortcutKey>,
+                  ],
                 },
               ].map(({ label, keys }) => (
                 <SettingsRow key={label}>
