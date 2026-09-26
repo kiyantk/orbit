@@ -142,7 +142,7 @@ app.whenReady().then(() => {
       nodeIntegration: false,
     },
     titleBarStyle: "hidden",
-    backgroundColor: "#15131a",
+    backgroundColor: getWindowBackgroundColor(readConfig().theme),
   });
 
   mainWindow.webContents.once("did-finish-load", () => {
@@ -457,6 +457,7 @@ let dataDir;
 let configPath;
 let dbPath;
 const defaultConfig = {
+  theme: "cosmic",
   welcomePopupSeen: false,
   username: null,
   indexedFolders: [],
@@ -496,6 +497,21 @@ const defaultConfig = {
   hiddenFolders: [],
 };
 
+const SUPPORTED_THEMES = new Set(["cosmic", "midnight", "glacier"]);
+
+function normalizeTheme(theme) {
+  return SUPPORTED_THEMES.has(theme) ? theme : defaultConfig.theme;
+}
+
+function getWindowBackgroundColor(theme) {
+  const windowBackgrounds = {
+    cosmic: "#15131a",
+    midnight: "#101722",
+    glacier: "#f4f7fb",
+  };
+  return windowBackgrounds[normalizeTheme(theme)];
+}
+
 // Database
 let db;
 
@@ -528,10 +544,11 @@ function getResourceStatus(id) {
 
 function readConfig() {
   try {
-    return {
+    const config = {
       ...defaultConfig,
       ...JSON.parse(fs.readFileSync(configPath, "utf8")),
     };
+    return { ...config, theme: normalizeTheme(config.theme) };
   } catch {
     return { ...defaultConfig };
   }
@@ -973,11 +990,13 @@ ipcMain.handle("save-settings", async (event, settings) => {
           : "english";
     const nextCountryNames =
       settings?.placesCountryNames === "code" ? "code" : "name";
+    const nextTheme = normalizeTheme(settings?.theme ?? currentConfig.theme);
     fs.writeFileSync(
       configPath,
       JSON.stringify(
         {
           ...settings,
+          theme: nextTheme,
           placesSelectionMode: nextSelectionMode,
           placesNameDisplay: nextNameDisplay,
           placesRegionNames: nextRegionNames,
@@ -990,6 +1009,9 @@ ipcMain.handle("save-settings", async (event, settings) => {
       ),
       "utf8",
     );
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setBackgroundColor(getWindowBackgroundColor(nextTheme));
+    }
     if (previousSelectionMode !== nextSelectionMode) {
       invalidateProgressSnapshots();
       if (!locationService) startLocationService();

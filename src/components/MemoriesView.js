@@ -263,7 +263,7 @@ const MemoriesView = ({
 
     if (!thumb) {
       return {
-        background: "#2a2a2a",
+        background: "var(--color-surface-base)",
       };
     }
 

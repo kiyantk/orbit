@@ -6,7 +6,7 @@
   z-index: 20;
   cursor: ns-resize;
   user-select: none;
-  background: linear-gradient(90deg, transparent, #00000070);
+  background: linear-gradient(90deg, transparent, var(--color-overlay-subtle));
 }
 
 .tl-year {
@@ -28,12 +28,12 @@
 
 .tl-year-label.active {
   font-weight: 500;
-  color: white;
+  color: var(--color-text-primary);
 }
 
 .tl-year-label.inactive {
   font-weight: 400;
-  color: rgb(225, 225, 225);
+  color: var(--color-text-secondary);
 }
 
 .tl-hover-line {
@@ -41,7 +41,7 @@
   left: 0;
   right: -1px;
   height: 1px;
-  background: #7c7386;
+  background: var(--color-border-strong);
   pointer-events: none;
 }
 
@@ -53,18 +53,18 @@
   padding: 5px 10px;
   font-size: 12px;
   font-weight: 500;
-  color: white;
+  color: var(--color-text-primary);
   white-space: nowrap;
   pointer-events: none;
   transition: opacity 0.1s, transform 0.1s;
   transform-origin: right center;
   z-index: 21;
   user-select: none;
-  background: linear-gradient(rgb(32 29 39 / 92%), rgba(20, 18, 26, 0.95)) padding-box;
-  border: var(--glass-border) solid rgba(255, 255, 255, 0.12);
+  background: var(--color-glass-background) padding-box;
+  border: var(--glass-border) solid var(--color-glass-border);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness)) contrast(var(--glass-contrast));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness)) contrast(var(--glass-contrast));
-  box-shadow: 0px 0.5px 0.6px rgba(0, 0, 0, .06), 0px 1.8px 2.3px rgba(0, 0, 0, .07), 0px 4.2px 5.3px rgba(0, 0, 0, .09), 0px 9.7px 12.1px rgba(0, 0, 0, .12);
+  box-shadow: 0 4px 12px var(--color-glass-shadow);
 
 }
 

@@ -82,12 +82,12 @@ const FolderList = ({
               {/* Status icon */}
               <span className="welcome-popup-folder-status">
                 {isAvailable === true && (
-                  <span style={{ color: "#03c503", marginRight: "6px" }} title="Folder available">
+                  <span style={{ color: "var(--color-success)", marginRight: "6px" }} title="Folder available">
                     <FontAwesomeIcon icon={faCircleCheck} />
                   </span>
                 )}
                 {isAvailable === false && (
-                  <span style={{ color: "#d75858", marginRight: "6px" }} title="Folder unavailable">
+                  <span style={{ color: "var(--color-danger)", marginRight: "6px" }} title="Folder unavailable">
                     <FontAwesomeIcon icon={faCircleXmark} />
                   </span>
                 )}
@@ -124,14 +124,14 @@ const FolderList = ({
                           textAlign: "center",
                           fontWeight: "bold",
                           textTransform: "uppercase",
-                          background: "#2a2733",
-                          color: "#fff",
-                          border: "1px solid #666",
+                          background: "var(--color-surface-control)",
+                          color: "var(--color-text-primary)",
+                          border: "1px solid var(--color-border-default)",
                           borderRadius: 4,
                           padding: "2px 4px",
                         }}
                       />
-                      <span style={{ color: "#aaa", fontSize: 12 }}>:</span>
+                      <span style={{ color: "var(--color-text-muted)", fontSize: 12 }}>:</span>
                     </span>
                   )}
 
@@ -144,7 +144,7 @@ const FolderList = ({
                       disabled={isDisabled}
                       style={{
                         marginRight: 4,
-                        color: hasCustom ? "#ffffff" : "#888",
+                        color: hasCustom ? "var(--color-text-primary)" : "var(--color-text-muted)",
                         fontWeight: hasCustom ? "bold" : "normal",
                         fontSize: 11,
                         minWidth: 28,
@@ -162,7 +162,7 @@ const FolderList = ({
                     disabled={isDisabled}
                     style={{
                       marginRight: 4,
-                      color: isHidden ? "#888" : "#ffffff",
+                      color: isHidden ? "var(--color-text-muted)" : "var(--color-text-primary)",
                       fontSize: 11,
                       minWidth: 28,
                       opacity: isDisabled ? 0.5 : 1,

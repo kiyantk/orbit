@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useLayoutEffect, useCallback } from "react";
 import MenuBar from "./components/MenuBar";
 import BottomBar from "./components/BottomBar";
 import SideBar from "./components/SideBar";
@@ -29,6 +29,12 @@ function hasActiveExplorerConstraint(activeFilters) {
     if (Array.isArray(value)) return value.length > 0;
     return value !== null && value !== undefined && value !== "" && value !== false;
   });
+}
+
+const THEME_NAMES = new Set(["cosmic", "midnight", "glacier"]);
+
+function getThemeName(theme) {
+  return THEME_NAMES.has(theme) ? theme : "cosmic";
 }
 
 const App = () => {
@@ -164,6 +170,10 @@ const App = () => {
         }
       });
   }, []);
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = getThemeName(settings?.theme);
+  }, [settings?.theme]);
 
   const checkFolderStatuses = useCallback(async () => {
     if (!settings?.indexedFolders?.length) return;

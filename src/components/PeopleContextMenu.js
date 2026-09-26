@@ -57,7 +57,7 @@ const PeopleContextMenu = ({ x, y, person, disabled, onClose, onRename, onSplit,
           onMouseEnter={() => setShowViewWith(true)}
           disabled={viewDisabled}
           style={{
-            background: showViewWith ? "#2d2a35" : "transparent",
+            background: showViewWith ? "var(--color-surface-selected)" : "transparent",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -73,7 +73,7 @@ const PeopleContextMenu = ({ x, y, person, disabled, onClose, onRename, onSplit,
         <div
           className="context-menu-submenu"
           role="menu"
-          style={{ minWidth: 150, background: "#2d2a35", borderLeft: "1px solid #3a3645", padding: "6px 0" }}
+          style={{ minWidth: 150, background: "var(--color-surface-selected)", borderLeft: "1px solid var(--color-border-subtle)", padding: "6px 0" }}
         >
           {["Explorer", "Shuffle", "Map"].map((view) => (
             <button

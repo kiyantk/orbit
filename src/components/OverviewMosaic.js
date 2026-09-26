@@ -41,7 +41,11 @@ const Tile = React.memo(({ item, size, onClick }) => {
         flexShrink: 0,
         cursor: "pointer",
         overflow: "hidden",
-        backgroundColor: src ? undefined : item ? "#333" : "#1a1a1a",
+        backgroundColor: src
+          ? undefined
+          : item
+            ? "var(--color-surface-base)"
+            : "var(--color-surface-sunken)",
         userSelect: "none",
       }}
     >

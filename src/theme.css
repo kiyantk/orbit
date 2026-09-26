@@ -1,0 +1,173 @@
+/*
+ * Semantic colour tokens for the application shell. Components should refer to
+ * the role a colour serves rather than a palette-specific literal, so adding a
+ * theme only requires changing this file.
+ */
+:root,
+:root[data-theme="cosmic"] {
+  color-scheme: dark;
+  --native-color-scheme: dark;
+
+  --color-app-background: #15131a;
+  --color-surface-base: #1b1a24;
+  --color-surface-sunken: #100e14;
+  --color-surface-raised: #1f1d27;
+  --color-surface-control: #2b272e;
+  --color-surface-hover: #3c3741;
+  --color-surface-active: #4a434e;
+  --color-surface-selected: #2d2a35;
+
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #c8c8c8;
+  --color-text-muted: #888888;
+  --color-text-on-accent: #ffffff;
+
+  --color-border-subtle: #3a3844;
+  --color-border-default: #484050;
+  --color-border-strong: #827e85;
+  --color-focus-ring: #a89cc2;
+
+  --color-accent: #62597c;
+  --color-accent-strong: #c9c1d9;
+  --color-accent-hover: #756b92;
+  --color-accent-soft: rgba(134, 121, 160, 0.16);
+
+  --color-success: #8ee6a0;
+  --color-warning: #ffd577;
+  --color-danger: #ff9a9a;
+  --color-danger-action: #a63131;
+  --color-info: #9388ae;
+
+  --color-overlay: rgba(0, 0, 0, 0.8);
+  --color-overlay-strong: rgba(0, 0, 0, 0.9);
+  --color-overlay-subtle: rgba(0, 0, 0, 0.45);
+  --color-shadow: rgba(0, 0, 0, 0.5);
+  --color-glass-shadow: rgba(0, 0, 0, 0.32);
+  --color-card-shadow: rgba(0, 0, 0, 0.45);
+  --color-media-overlay-strong: rgba(0, 0, 0, 0.78);
+  --color-media-overlay-soft: rgba(0, 0, 0, 0.25);
+  --color-media-text-primary: #ffffff;
+  --color-media-text-secondary: rgba(255, 255, 255, 0.7);
+  --color-glass-background: linear-gradient(
+    rgb(32 29 39 / 92%),
+    rgba(20, 18, 26, 0.95)
+  );
+  --color-glass-border: rgba(255, 255, 255, 0.12);
+
+  --color-map-country-border: #4e1982;
+  --color-map-country-fill: #7f54b3;
+  --color-map-unvisited-border: #444444;
+  --color-map-route: #ff5b5b;
+}
+
+:root[data-theme="midnight"] {
+  color-scheme: dark;
+  --native-color-scheme: dark;
+
+  --color-app-background: #101722;
+  --color-surface-base: #16202e;
+  --color-surface-sunken: #0b111a;
+  --color-surface-raised: #192535;
+  --color-surface-control: #243246;
+  --color-surface-hover: #30425a;
+  --color-surface-active: #405976;
+  --color-surface-selected: #26384d;
+
+  --color-text-primary: #f4f8ff;
+  --color-text-secondary: #c4d0df;
+  --color-text-muted: #8d9aad;
+  --color-text-on-accent: #071321;
+
+  --color-border-subtle: #304055;
+  --color-border-default: #40536b;
+  --color-border-strong: #7187a0;
+  --color-focus-ring: #86a6cb;
+
+  --color-accent: #4f78a8;
+  --color-accent-strong: #bdcee2;
+  --color-accent-hover: #668ab6;
+  --color-accent-soft: rgba(91, 132, 178, 0.18);
+
+  --color-success: #8cddad;
+  --color-warning: #ffcf70;
+  --color-danger: #ffaaa7;
+  --color-danger-action: #a94343;
+  --color-info: #7899bd;
+
+  --color-overlay: rgba(3, 8, 15, 0.8);
+  --color-overlay-strong: rgba(3, 8, 15, 0.92);
+  --color-overlay-subtle: rgba(3, 8, 15, 0.48);
+  --color-shadow: rgba(0, 0, 0, 0.55);
+  --color-glass-shadow: rgba(0, 0, 0, 0.35);
+  --color-card-shadow: rgba(0, 0, 0, 0.5);
+  --color-media-overlay-strong: rgba(3, 8, 15, 0.8);
+  --color-media-overlay-soft: rgba(3, 8, 15, 0.28);
+  --color-media-text-primary: #f4f8ff;
+  --color-media-text-secondary: rgba(244, 248, 255, 0.72);
+  --color-glass-background: linear-gradient(
+    rgb(28 43 62 / 92%),
+    rgba(10, 18, 29, 0.96)
+  );
+  --color-glass-border: rgba(202, 227, 255, 0.14);
+
+  --color-map-country-border: #3578c8;
+  --color-map-country-fill: #5798e6;
+  --color-map-unvisited-border: #52657c;
+  --color-map-route: #ff7770;
+}
+
+:root[data-theme="glacier"] {
+  color-scheme: light;
+  --native-color-scheme: light;
+
+  --color-app-background: #f4f7fb;
+  --color-surface-base: #eef3f8;
+  --color-surface-sunken: #e6edf5;
+  --color-surface-raised: #ffffff;
+  --color-surface-control: #ffffff;
+  --color-surface-hover: #e4ecf6;
+  --color-surface-active: #d5e2f0;
+  --color-surface-selected: #e0edfb;
+
+  --color-text-primary: #172033;
+  --color-text-secondary: #475569;
+  --color-text-muted: #718096;
+  --color-text-on-accent: #ffffff;
+
+  --color-border-subtle: #d9e2ec;
+  --color-border-default: #c5d1df;
+  --color-border-strong: #9aabbd;
+  --color-focus-ring: #7192b4;
+
+  --color-accent: #54789e;
+  --color-accent-strong: #385a7d;
+  --color-accent-hover: #6789ad;
+  --color-accent-soft: rgba(84, 120, 158, 0.14);
+
+  --color-success: #237b46;
+  --color-warning: #996000;
+  --color-danger: #b83a4b;
+  --color-danger-action: #b83a4b;
+  --color-info: #54789e;
+
+  --color-overlay: rgba(23, 32, 51, 0.56);
+  --color-overlay-strong: rgba(23, 32, 51, 0.76);
+  --color-overlay-subtle: rgba(107, 130, 158, 0.24);
+  --color-shadow: rgba(23, 32, 51, 0.18);
+  --color-glass-shadow: rgba(23, 32, 51, 0.1);
+  --color-card-shadow: rgba(23, 32, 51, 0.14);
+  --color-media-overlay-strong: rgba(0, 0, 0, 0.78);
+  --color-media-overlay-soft: rgba(0, 0, 0, 0.25);
+  --color-media-text-primary: #ffffff;
+  --color-media-text-secondary: rgba(255, 255, 255, 0.7);
+  --color-glass-background: linear-gradient(
+    rgb(255 255 255 / 92%),
+    rgba(240, 245, 251, 0.96)
+  );
+  --color-glass-border: rgba(86, 112, 143, 0.24);
+
+  --color-map-country-border: #2f72c7;
+  --color-map-country-fill: #78aee8;
+  --color-map-unvisited-border: #8b9aac;
+  --color-map-route: #c7414e;
+}

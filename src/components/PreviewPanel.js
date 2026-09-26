@@ -881,7 +881,7 @@ export default function PreviewPanel({
             <div
               style={{
                 padding: "2px 0",
-                backgroundColor: "#28262d",
+                backgroundColor: "var(--color-surface-raised)",
                 borderRadius: "0 0 10px 10px",
               }}
             >

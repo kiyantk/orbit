@@ -7,8 +7,8 @@ const KIND_CLASS = {
 };
 
 const KIND_STYLE = {
-  secondary: { backgroundColor: "rgb(30 27 41)" },
-  danger: { backgroundColor: "rgb(166 49 49)" },
+  secondary: { backgroundColor: "var(--color-surface-raised)" },
+  danger: { backgroundColor: "var(--color-danger-action)" },
 };
 
 const PopupButton = ({ label, onClick, disabled, kind = "primary", style }) => (

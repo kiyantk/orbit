@@ -17,25 +17,25 @@
 .tags-table {
   width: 100%;
   border-collapse: collapse;
-  background: #15131a;
+  background: var(--color-app-background);
   border: none;
 }
 
 .tags-table th,
 .tags-table td {
   padding: 8px;
-  border-bottom: 1px solid #3f3f3f;
+  border-bottom: 1px solid var(--color-border-subtle);
   text-align: left;
 }
 
 .tags-table th {
-  background: #15131a;
+  background: var(--color-app-background);
 }
 
 .no-tags {
   text-align: center !important;
   padding: 12px;
-  color: #777;
+  color: var(--color-text-muted);
 }
 
 .tag-label {
@@ -43,7 +43,7 @@
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 0.85rem;
-  color: white;
+  color: var(--color-text-on-accent);
 }
 
 .actions .btn {
@@ -59,35 +59,35 @@
   border-radius: 4px;
   cursor: pointer;
   border: none;
-  outline: 1px solid #4f4b52;
+  outline: 1px solid var(--color-border-default);
   border-radius: 2px;
 }
 
 .btn-primary {
-  background: #2b272e;
-  color: white;
+  background: var(--color-surface-control);
+  color: var(--color-text-primary);
 }
 
 .btn-primary:hover {
-  background: #3c3741;
+  background: var(--color-surface-hover);
 }
 
 .btn-danger {
-  background: #2b272e;
-  color: white;
+  background: var(--color-surface-control);
+  color: var(--color-text-primary);
 }
 
 .btn-danger:hover {
-  background: #3c3741;
+  background: var(--color-surface-hover);
 }
 
 .input, .textarea {
   width: 100%;
   padding: 6px;
-  color: white;
+  color: var(--color-text-primary);
   margin-bottom: 10px;
-  background-color: #2b272e;
-  border: 1px solid #4f4b52;
+  background-color: var(--color-surface-control);
+  border: 1px solid var(--color-border-default);
   border-radius: 2px;
 }
 

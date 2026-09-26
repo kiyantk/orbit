@@ -9,6 +9,11 @@ import * as topojson from "topojson-client";
 
 const TOPO_URL = "/countries.final.topo.json";
 
+function getThemeColor(token, fallback) {
+  if (typeof document === "undefined") return fallback;
+  return getComputedStyle(document.documentElement).getPropertyValue(token).trim() || fallback;
+}
+
 const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountChange }) => {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -248,7 +253,12 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
       });
 
       lineLayer.current = L.featureGroup(
-        res.lines.map((seg) => L.polyline(seg, { color: "red", weight: 2 })),
+        res.lines.map((seg) =>
+          L.polyline(seg, {
+            color: getThemeColor("--color-map-route", "#ff5b5b"),
+            weight: 2,
+          }),
+        ),
       );
 
       setCountryCounts(res.countryCounts);
@@ -301,6 +311,16 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
   // ─── Build / rebuild the countries GeoJSON highlight layer ───────────────
   const buildCountriesLayer = useCallback(
     async (map, visitedCodes) => {
+      const unvisitedBorder = getThemeColor(
+        "--color-map-unvisited-border",
+        "#444444",
+      );
+      const visitedFill = getThemeColor("--color-map-country-fill", "#7f54b3");
+      const visitedBorder = getThemeColor(
+        "--color-map-country-border",
+        "#4e1982",
+      );
+
       // Remove any existing countries layer
       if (countriesLayer.current && map.hasLayer(countriesLayer.current)) {
         map.removeLayer(countriesLayer.current);
@@ -337,7 +357,7 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
             return {
               fillColor: "transparent",
               fillOpacity: 0,
-              color: "#444",
+              color: unvisitedBorder,
               weight: 0.4,
               opacity: 0.3,
             };
@@ -345,9 +365,9 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
           const count = visitedCodes[rawCode] || 1;
           const opacity = 0.35 + 0.3 * (count / maxCount);
           return {
-            fillColor: "#7f54b3",
+            fillColor: visitedFill,
             fillOpacity: opacity,
-            color: "#4e1982",
+            color: visitedBorder,
             weight: 1.2,
             opacity: 0.9,
           };
@@ -410,7 +430,7 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
         if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30] });
       }
     },
-    [loadGeoJson],
+    [currentSettings?.theme, loadGeoJson],
   );
 
   // ─── Mode switch ──────────────────────────────────────────────────────────
@@ -477,9 +497,9 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
     <>
       <style>{`
         .country-tooltip {
-          background: rgba(20, 20, 20, 0.88);
-          color: #fff;
-          border: 1px solid #4e1982;
+          background: var(--color-overlay);
+          color: var(--color-text-primary);
+          border: 1px solid var(--color-map-country-border);
           border-radius: 6px;
           font-size: 12px;
           padding: 5px 9px;
@@ -509,8 +529,8 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
             minWidth: 250,
             maxHeight: 400,
             overflowY: "auto",
-            background: "rgba(44,44,44,0.95)",
-            color: "white",
+            background: "var(--color-surface-raised)",
+            color: "var(--color-text-primary)",
             padding: 10,
             borderRadius: 10,
             zIndex: 1000,

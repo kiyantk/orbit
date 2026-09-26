@@ -56,6 +56,15 @@ const TAB_ICONS = {
   App: faToolbox,
 };
 
+const THEME_COLORS = {
+  muted: "var(--color-text-muted)",
+  secondary: "var(--color-text-secondary)",
+  success: "var(--color-success)",
+  warning: "var(--color-warning)",
+  danger: "var(--color-danger)",
+  info: "var(--color-info)",
+};
+
 function formatBytes(bytes, decimals = 2) {
   if (!+bytes) return "0 Bytes";
   const k = 1024;
@@ -158,7 +167,7 @@ const BackupPopup = ({
       <div
         style={{
           marginTop: 10,
-          color: status.type === "error" ? "#ff9a9a" : "#8ee6a0",
+          color: status.type === "error" ? THEME_COLORS.danger : THEME_COLORS.success,
         }}
       >
         {status.message}
@@ -278,37 +287,37 @@ const SmartSearchStatus = () => {
 
   if (loading) {
     statusLabel = "Checking…";
-    statusColor = "#888";
+    statusColor = THEME_COLORS.muted;
   } else if (resourceState === "download-required") {
     statusLabel = "Download required";
-    statusColor = "#ffd577";
+    statusColor = THEME_COLORS.warning;
   } else if (resourceState === "downloading") {
     statusLabel = `Downloading ${resource.progressPercent ?? 0}%`;
-    statusColor = "#a78bfa";
+    statusColor = THEME_COLORS.info;
   } else if (resourceState === "extracting") {
     statusLabel = "Extracting/installing...";
-    statusColor = "#a78bfa";
+    statusColor = THEME_COLORS.info;
   } else if (resourceState === "download-failed") {
     statusLabel = "Download failed";
-    statusColor = "#ff9a9a";
+    statusColor = THEME_COLORS.danger;
   } else if (status.initError) {
     statusLabel = "Error loading model";
-    statusColor = "#ff9a9a";
+    statusColor = THEME_COLORS.danger;
   } else if (status.paused) {
     statusLabel = "Paused";
-    statusColor = "#888";
+    statusColor = THEME_COLORS.muted;
   } else if (!status.modelReady) {
     statusLabel = "Loading CLIP model…";
-    statusColor = "#ffd577";
+    statusColor = THEME_COLORS.warning;
   } else if (isComplete) {
     statusLabel = "Ready";
-    statusColor = "#d8d8d8";
+    statusColor = THEME_COLORS.secondary;
   } else if (status.total === 0) {
     statusLabel = "Ready - no images indexed yet";
-    statusColor = "#888";
+    statusColor = THEME_COLORS.muted;
   } else {
     statusLabel = `Indexing in background… ${percentage}%`;
-    statusColor = "#8f8f8f";
+    statusColor = THEME_COLORS.muted;
   }
 
   return (
@@ -332,10 +341,10 @@ const SmartSearchStatus = () => {
               style={{
                 width: `${displayPercentage}%`,
                 backgroundColor: showResourceProgress
-                  ? "#a78bfa"
+                  ? THEME_COLORS.info
                   : isComplete
-                    ? "#4caf82"
-                    : "#a78bfa",
+                    ? THEME_COLORS.success
+                    : THEME_COLORS.info,
               }}
             />
           </div>
@@ -426,17 +435,17 @@ const OcrStatus = () => {
   const complete = status.total > 0 && status.done >= status.total;
   const percentage = status.total > 0 ? Math.round(status.done / status.total * 100) : 0;
   let label = "Indexing in background… " + percentage + "%";
-  let color = "#8f8f8f";
-  if (loading) { label = "Checking…"; color = "#888"; }
-  else if (resourceState === "download-required") { label = "Download required"; color = "#ffd577"; }
-  else if (resourceState === "downloading") { label = "Downloading " + (resource.progressPercent ?? 0) + "%"; color = "#a78bfa"; }
-  else if (resourceState === "extracting") { label = "Extracting/installing..."; color = "#a78bfa"; }
-  else if (resourceState === "download-failed") { label = "Download failed"; color = "#ff9a9a"; }
-  else if (status.initError) { label = "Error loading OCR model"; color = "#ff9a9a"; }
-  else if (status.paused) { label = "Paused"; color = "#888"; }
-  else if (!status.modelReady) { label = "Loading OCR model…"; color = "#ffd577"; }
-  else if (complete) { label = "Ready"; color = "#d8d8d8"; }
-  else if (!status.total) { label = "Ready - no images indexed yet"; color = "#888"; }
+  let color = THEME_COLORS.muted;
+  if (loading) { label = "Checking…"; color = THEME_COLORS.muted; }
+  else if (resourceState === "download-required") { label = "Download required"; color = THEME_COLORS.warning; }
+  else if (resourceState === "downloading") { label = "Downloading " + (resource.progressPercent ?? 0) + "%"; color = THEME_COLORS.info; }
+  else if (resourceState === "extracting") { label = "Extracting/installing..."; color = THEME_COLORS.info; }
+  else if (resourceState === "download-failed") { label = "Download failed"; color = THEME_COLORS.danger; }
+  else if (status.initError) { label = "Error loading OCR model"; color = THEME_COLORS.danger; }
+  else if (status.paused) { label = "Paused"; color = THEME_COLORS.muted; }
+  else if (!status.modelReady) { label = "Loading OCR model…"; color = THEME_COLORS.warning; }
+  else if (complete) { label = "Ready"; color = THEME_COLORS.secondary; }
+  else if (!status.total) { label = "Ready - no images indexed yet"; color = THEME_COLORS.muted; }
   const download = async () => {
     setBusy(true);
     try { await window.electron.ipcRenderer.invoke("resource:download", "ocr"); await fetchStatus(); }
@@ -456,7 +465,7 @@ const OcrStatus = () => {
       {(resourceBusy || status.total > 0) && <div className="smart-search-status-bar-track">
         <div className="smart-search-status-bar-fill" style={{
           width: String(resourceBusy ? resource.progressPercent ?? 0 : percentage) + "%",
-          backgroundColor: resourceBusy ? "#a78bfa" : complete ? "#4caf82" : "#a78bfa",
+          backgroundColor: resourceBusy ? THEME_COLORS.info : complete ? THEME_COLORS.success : THEME_COLORS.info,
         }} />
       </div>}
       <div className="smart-search-status-counts-row">
@@ -515,17 +524,17 @@ const FacialRecognitionStatus = () => {
   const complete = status.total > 0 && status.done >= status.total;
   const percentage = status.total > 0 ? Math.round(status.done / status.total * 100) : 0;
   let label = "Indexing in background… " + percentage + "%";
-  let color = "#8f8f8f";
-  if (loading) { label = "Checking…"; color = "#888"; }
-  else if (resourceState === "download-required") { label = "Download required"; color = "#ffd577"; }
-  else if (resourceState === "downloading") { label = "Downloading " + (resource.progressPercent ?? 0) + "%"; color = "#a78bfa"; }
-  else if (resourceState === "extracting") { label = "Extracting/installing..."; color = "#a78bfa"; }
-  else if (resourceState === "download-failed") { label = "Download failed"; color = "#ff9a9a"; }
-  else if (status.initError) { label = "Error loading face models"; color = "#ff9a9a"; }
-  else if (status.paused) { label = "Paused"; color = "#888"; }
-  else if (!status.modelReady) { label = "Loading face models…"; color = "#ffd577"; }
-  else if (complete) { label = "Ready"; color = "#d8d8d8"; }
-  else if (!status.total) { label = "Ready - no images indexed yet"; color = "#888"; }
+  let color = THEME_COLORS.muted;
+  if (loading) { label = "Checking…"; color = THEME_COLORS.muted; }
+  else if (resourceState === "download-required") { label = "Download required"; color = THEME_COLORS.warning; }
+  else if (resourceState === "downloading") { label = "Downloading " + (resource.progressPercent ?? 0) + "%"; color = THEME_COLORS.info; }
+  else if (resourceState === "extracting") { label = "Extracting/installing..."; color = THEME_COLORS.info; }
+  else if (resourceState === "download-failed") { label = "Download failed"; color = THEME_COLORS.danger; }
+  else if (status.initError) { label = "Error loading face models"; color = THEME_COLORS.danger; }
+  else if (status.paused) { label = "Paused"; color = THEME_COLORS.muted; }
+  else if (!status.modelReady) { label = "Loading face models…"; color = THEME_COLORS.warning; }
+  else if (complete) { label = "Ready"; color = THEME_COLORS.secondary; }
+  else if (!status.total) { label = "Ready - no images indexed yet"; color = THEME_COLORS.muted; }
 
   const download = async () => {
     setBusy(true);
@@ -546,7 +555,7 @@ const FacialRecognitionStatus = () => {
       {(resourceBusy || status.total > 0) && <div className="smart-search-status-bar-track">
         <div className="smart-search-status-bar-fill" style={{
           width: String(resourceBusy ? resource.progressPercent ?? 0 : percentage) + "%",
-          backgroundColor: resourceBusy ? "#a78bfa" : complete ? "#4caf82" : "#a78bfa",
+          backgroundColor: resourceBusy ? THEME_COLORS.info : complete ? THEME_COLORS.success : THEME_COLORS.info,
         }} />
       </div>}
       <div className="smart-search-status-counts-row">
@@ -675,19 +684,19 @@ const SettingsView = ({
     ? locationResource.progressPercent ?? 0
     : locationIndexPercentage;
   let locationStatusLabel = "Ready";
-  let locationStatusColor = "#8f8f8f";
+  let locationStatusColor = THEME_COLORS.muted;
   if (locationResourceState === "download-required") {
     locationStatusLabel = "Download required";
-    locationStatusColor = "#ffd577";
+    locationStatusColor = THEME_COLORS.warning;
   } else if (locationResourceState === "downloading") {
     locationStatusLabel = `Downloading ${locationResource.progressPercent ?? 0}%`;
-    locationStatusColor = "#a78bfa";
+    locationStatusColor = THEME_COLORS.info;
   } else if (locationResourceState === "extracting") {
     locationStatusLabel = "Extracting/installing...";
-    locationStatusColor = "#a78bfa";
+    locationStatusColor = THEME_COLORS.info;
   } else if (locationResourceState === "download-failed") {
     locationStatusLabel = "Download failed";
-    locationStatusColor = "#ff9a9a";
+    locationStatusColor = THEME_COLORS.danger;
   } else if (locationStatus.paused) {
     locationStatusLabel = "Paused";
   } else if (locationStatus.total > 0) {
@@ -1138,7 +1147,7 @@ const SettingsView = ({
                 <input
                   className="settings-content-input"
                   type="date"
-                  style={{ colorScheme: "dark" }}
+                  style={{ colorScheme: "var(--native-color-scheme)" }}
                   value={settings.birthDate}
                   onChange={handleSelect("birthDate")}
                 />
@@ -1673,7 +1682,7 @@ const SettingsView = ({
                   <span>Don't close the app</span>
                 </div>
               )}
-              <h3 style={{ marginTop: 18, paddingTop: 12, borderTop: "1px solid #3f3f3f" }}>Smart Search</h3>
+              <h3 style={{ marginTop: 18, paddingTop: 12, borderTop: "1px solid var(--color-border-subtle)" }}>Smart Search</h3>
               {/* ── Smart Search Status ── */}
               <div style={{ marginTop: 10 }}>
                 <SmartSearchStatus />
@@ -1702,7 +1711,7 @@ const SettingsView = ({
                         className="smart-search-status-bar-fill"
                         style={{
                           width: `${locationProgressPercentage}%`,
-                          backgroundColor: "#a78bfa",
+                          backgroundColor: THEME_COLORS.info,
                         }}
                       />
                     </div>
@@ -1966,7 +1975,7 @@ const SettingsView = ({
                             style={{
                               width: "100%",
                               height: 1,
-                              backgroundColor: "#2d2a35",
+                              backgroundColor: "var(--color-surface-selected)",
                               margin: "6px 0",
                             }}
                           />
@@ -1984,7 +1993,7 @@ const SettingsView = ({
                             style={{
                               width: "100%",
                               height: 1,
-                              backgroundColor: "#2d2a35",
+                              backgroundColor: "var(--color-surface-selected)",
                               margin: "6px 0",
                             }}
                           />
@@ -1995,7 +2004,7 @@ const SettingsView = ({
                             <span key={label} className="storage-legend-text">
                               {dot(color)}
                               {label}: {val > 0 ? formatBytes(val) : "0 Bytes"}
-                              <span style={{ color: "#666", marginLeft: 4 }}>
+                              <span style={{ color: THEME_COLORS.muted, marginLeft: 4 }}>
                                 ({rows})
                               </span>
                             </span>
@@ -2175,6 +2184,18 @@ const SettingsView = ({
                   alt="Orbit logo"
                 />
                 <span>Orbit 1.2.0</span>
+              </SettingsRow>
+              <SettingsRow>
+                <span>Theme:</span>
+                <select
+                  className="settings-itemstyle-select"
+                  value={settings.theme ?? "cosmic"}
+                  onChange={handleSelect("theme")}
+                >
+                  <option value="cosmic">Cosmic</option>
+                  <option value="midnight">Midnight</option>
+                  <option value="glacier">Glacier</option>
+                </select>
               </SettingsRow>
               <SettingsRow>
                 <button

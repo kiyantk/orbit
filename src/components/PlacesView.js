@@ -217,7 +217,7 @@ const PlaceCard = React.memo(
           style={
             thumbUrl
               ? { backgroundImage: `url(${thumbUrl})` }
-              : { background: "#1e1e1e" }
+              : { background: "var(--color-surface-sunken)" }
           }
         />
         <div className="place-card__overlay" />

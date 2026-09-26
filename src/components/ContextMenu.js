@@ -133,12 +133,12 @@ const ContextMenu = ({
         position: "fixed",
         top: position.top,
         left: position.left,
-        backgroundColor: "#1c1a22",
-        color: "white",
-        border: "1px solid #3a3645",
+        backgroundColor: "var(--color-surface-raised)",
+        color: "var(--color-text-primary)",
+        border: "1px solid var(--color-border-subtle)",
         borderRadius: 6,
         zIndex: 2000,
-        boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+        boxShadow: "0 4px 12px var(--color-shadow)",
         display: "flex",
         userSelect: "none",
       }}
@@ -192,7 +192,7 @@ const ContextMenu = ({
             cursor: "pointer",
             whiteSpace: "nowrap",
             textAlign: "left",
-            backgroundColor: showTags ? "#2d2a35" : "transparent",
+            backgroundColor: showTags ? "var(--color-surface-selected)" : "transparent",
           }}
           className="context-menu-item"
           onMouseEnter={() => { setShowTags(true); setShowPerson(false); }}
@@ -206,7 +206,7 @@ const ContextMenu = ({
             cursor: "pointer",
             whiteSpace: "nowrap",
             textAlign: "left",
-            backgroundColor: showPerson ? "#2d2a35" : "transparent",
+            backgroundColor: showPerson ? "var(--color-surface-selected)" : "transparent",
           }}
           className="context-menu-item"
           onMouseEnter={() => { setShowPerson(true); setShowTags(false); }}
@@ -219,7 +219,7 @@ const ContextMenu = ({
             cursor: "pointer",
             whiteSpace: "nowrap",
             textAlign: "left",
-            color: "#ff6b6b",
+            color: "var(--color-danger)",
           }}
           className="context-menu-item"
           onMouseEnter={() => { setShowTags(false); setShowPerson(false); }}
@@ -242,8 +242,8 @@ const ContextMenu = ({
             maxHeight: mainMenuHeight || 200,
             boxSizing: "border-box",
             overflowY: "auto",
-            backgroundColor: "#2d2a35",
-            borderLeft: "1px solid #3a3645",
+            backgroundColor: "var(--color-surface-selected)",
+            borderLeft: "1px solid var(--color-border-subtle)",
             padding: "6px 0",
           }}
         >
@@ -285,8 +285,8 @@ const ContextMenu = ({
           className="context-menu-submenu"
           style={{
             minWidth: 190,
-            backgroundColor: "#2d2a35",
-            borderLeft: "1px solid #3a3645",
+            backgroundColor: "var(--color-surface-selected)",
+            borderLeft: "1px solid var(--color-border-subtle)",
             padding: "6px 0",
           }}
         >
@@ -307,7 +307,7 @@ const ContextMenu = ({
             </>
           )}
           {activePersonId && (
-            <div className="context-menu-item" style={{ padding: "6px 12px", color: "#ff9a9a" }} onClick={() => onPersonAction("hide-not-face", item, itemIds)}>
+            <div className="context-menu-item" style={{ padding: "6px 12px", color: "var(--color-danger)" }} onClick={() => onPersonAction("hide-not-face", item, itemIds)}>
               Hide / Not a face
             </div>
           )}
@@ -331,7 +331,7 @@ const ContextMenu = ({
               This action cannot be undone.
             </>
           }
-          confirmButtonStyle={{ backgroundColor: "rgb(166 49 49)" }}
+          confirmButtonStyle={{ backgroundColor: "var(--color-danger-action)" }}
           onCancel={() => setShowRemoveConfirm(false)}
           onConfirm={() => {
             onRemoveItem(itemIds);

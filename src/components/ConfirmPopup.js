@@ -25,7 +25,7 @@ const ConfirmPopup = ({
       },
     ]}
   >
-    <span style={{ color: "#ccc" }}>
+    <span style={{ color: "var(--color-text-secondary)" }}>
       {message}
       {subMessage && (
         <>

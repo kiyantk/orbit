@@ -164,7 +164,7 @@ const ShuffleView = ({
   if (loading) {
     return (
       <div className="shuffle-loading">
-        <div className="loader"></div>
+        <div className="shuffle-loader"></div>
       </div>
     );
   }

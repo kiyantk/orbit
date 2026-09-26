@@ -37,6 +37,18 @@ const StatsView = ({ birthDate, currentSettings, onRevealItem }) => {
   const [milestones, setMilestones] = useState(null);
   const [milestoneView, setMilestoneView] = useState("table");
 
+  const chartColors = useMemo(() => {
+    const readToken = (token, fallback) =>
+      getComputedStyle(document.documentElement).getPropertyValue(token).trim() || fallback;
+
+    return {
+      accent: readToken("--color-accent", "#775ae4"),
+      border: readToken("--color-border-subtle", "#3a3844"),
+      panel: readToken("--color-surface-raised", "#1f1d27"),
+      text: readToken("--color-text-secondary", "#c8c8c8"),
+    };
+  }, [currentSettings?.theme]);
+
   const handleChangeYear = useCallback((offset) => {
     setCalendarYear((prev) => prev + offset);
   }, []);
@@ -148,7 +160,7 @@ const StatsView = ({ birthDate, currentSettings, onRevealItem }) => {
     });
   };
 
-  const toChartData = (data, xKey, color = "#775ae4") => {
+  const toChartData = (data, xKey, color = chartColors.accent) => {
     const isNumeric = xKey === "year" || xKey === "age";
 
     return {
@@ -185,6 +197,11 @@ const StatsView = ({ birthDate, currentSettings, onRevealItem }) => {
       plugins: {
         legend: { display: false },
         tooltip: {
+          backgroundColor: chartColors.panel,
+          titleColor: chartColors.text,
+          bodyColor: chartColors.text,
+          borderColor: chartColors.border,
+          borderWidth: 1,
           callbacks: {
             title: (items) => {
               const item = items[0];
@@ -226,6 +243,7 @@ const StatsView = ({ birthDate, currentSettings, onRevealItem }) => {
               min: minLimit,
               max: maxLimit,
               ticks: {
+                color: chartColors.text,
                 font: { size: 11 },
                 stepSize: 1,
                 precision: 0,
@@ -233,10 +251,12 @@ const StatsView = ({ birthDate, currentSettings, onRevealItem }) => {
               },
             }
           : {
-              ticks: { font: { size: 11 } },
+              ticks: { color: chartColors.text, font: { size: 11 } },
+              grid: { color: chartColors.border },
             },
         y: {
-          ticks: { font: { size: 11 } },
+          ticks: { color: chartColors.text, font: { size: 11 } },
+          grid: { color: chartColors.border },
           beginAtZero: true,
         },
       },
