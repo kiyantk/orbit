@@ -10,6 +10,7 @@ import "react-virtualized/styles.css";
 const CARD_MIN_WIDTH = 156;
 const CARD_HEIGHT = 210;
 const GRID_GAP = 16;
+const PEOPLE_REFRESH_DELAY_MS = 3000;
 
 function normaliseText(value) {
   return String(value ?? "")
@@ -171,40 +172,69 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
   const reviewFaceMaskId = useRef(`people-review-face-mask-${Math.random().toString(36).slice(2)}`).current;
   const [reviewImageLayout, setReviewImageLayout] = useState(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
+  const refreshTimerRef = useRef(null);
+  const loadInFlightRef = useRef(null);
+  const peopleCountRef = useRef(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ includeStatus = false } = {}) => {
+    if (loadInFlightRef.current) return loadInFlightRef.current;
+
+    const request = (async () => {
+      try {
+        const [peopleResult, status] = await Promise.all([
+          window.electron.ipcRenderer.invoke("people:list"),
+          includeStatus ? window.electron.ipcRenderer.invoke("facial-recognition:get-status") : null,
+        ]);
+        if (peopleResult?.success) setPeople(peopleResult.data ?? []);
+        if (status?.resource) setResource(status.resource);
+        if (status?.people != null && Number.isFinite(Number(status.people))) peopleCountRef.current = Number(status.people);
+      } finally {
+        setLoading(false);
+      }
+    })();
+
+    loadInFlightRef.current = request;
     try {
-      const [peopleResult, status] = await Promise.all([
-        window.electron.ipcRenderer.invoke("people:list"),
-        window.electron.ipcRenderer.invoke("facial-recognition:get-status"),
-      ]);
-      if (peopleResult?.success) setPeople(peopleResult.data ?? []);
-      if (status?.resource) setResource(status.resource);
+      await request;
     } finally {
-      setLoading(false);
+      if (loadInFlightRef.current === request) loadInFlightRef.current = null;
     }
   }, []);
 
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
+  const scheduleLoad = useCallback(() => {
+    if (refreshTimerRef.current) return;
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      void load();
+    }, PEOPLE_REFRESH_DELAY_MS);
   }, [load]);
 
   useEffect(() => {
-    const refresh = () => load();
-    const progress = window.electron.ipcRenderer.on("facial-recognition-progress", refresh);
+    void load({ includeStatus: true });
+    return () => {
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+    };
+  }, [load]);
+
+  useEffect(() => {
+    const progress = window.electron.ipcRenderer.on("facial-recognition-progress", (next) => {
+      if (next?.resource) setResource(next.resource);
+      const peopleCount = Number(next?.people);
+      if (next?.people == null || !Number.isFinite(peopleCount) || peopleCount === peopleCountRef.current) return;
+      peopleCountRef.current = peopleCount;
+      scheduleLoad();
+    });
     const resources = window.electron.ipcRenderer.on("resource-status", (next) => {
       if (next?.id === "facial-recognition") {
         setResource(next);
-        if (next.state === "ready") load();
+        if (next.state === "ready") scheduleLoad();
       }
     });
     return () => {
       progress?.();
       resources?.();
     };
-  }, [load]);
+  }, [scheduleLoad]);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -303,13 +333,23 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
     setFaceGridActionId(null);
   }, []);
 
+  const viewPerson = useCallback(async (person, view = "explore") => {
+    try {
+      const result = await window.electron.ipcRenderer.invoke("people:list-person-files", { personId: person.id });
+      if (!result?.success) throw new Error(result?.error || "Unable to load this person's media.");
+      onViewPerson({ ...person, fileIds: result.data ?? [] }, view);
+    } catch (error) {
+      setRegroupError(error.message || "Unable to load this person's media.");
+    }
+  }, [onViewPerson]);
+
   const handlePersonClick = useCallback((event, person) => {
     if (event.ctrlKey) {
       openFaceGrid(person);
       return;
     }
     if (!bulkMode) {
-      if (person.fileIds?.length) onViewPerson(person);
+      if (Number(person.itemCount) > 0) void viewPerson(person);
       return;
     }
     if (bulkMode === "merge-target") {
@@ -323,7 +363,7 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
         ? current.filter((personId) => personId !== person.id)
         : [...current, person.id]
     ));
-  }, [bulkMode, bulkTargetId, onViewPerson, openFaceGrid]);
+  }, [bulkMode, bulkTargetId, openFaceGrid, viewPerson]);
 
   const openBulkConfirmation = useCallback(() => {
     if (!bulkPersonIds.length) return;
@@ -738,7 +778,7 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
           onSplit={openSplitPerson}
           onShowSimilar={showSimilarPeople}
           onToggleHidden={togglePersonHidden}
-          onViewWith={onViewPerson}
+          onViewWith={viewPerson}
         />
       )}
       {faceGridPerson && (

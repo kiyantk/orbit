@@ -6,7 +6,7 @@ const PeopleContextMenu = ({ x, y, person, disabled, onClose, onRename, onSplit,
   const menuRef = useRef(null);
   const [position, setPosition] = useState({ left: x, top: y });
   const [showViewWith, setShowViewWith] = useState(false);
-  const viewDisabled = disabled || !person.fileIds?.length;
+  const viewDisabled = disabled || Number(person.itemCount) < 1;
 
   useLayoutEffect(() => {
     const updatePosition = () => {

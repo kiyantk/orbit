@@ -3156,15 +3156,20 @@ ipcMain.handle("get-index-of-item", async (event, { itemId, settings = {} }) => 
   try {
     if (!db) return null;
     settings = settings ?? {};
-    const visibilityFilter = settings.hideScreenshotsAndScreenRecordings
-      ? "COALESCE(capture_type, '') NOT IN ('screenshot', 'screen_recording')"
-      : "1 = 1";
+    const { sql: visibilitySql, params: visibilityParams } = buildWhereClause(
+      {},
+      {
+        excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
+        hiddenFolders: settings.hiddenFolders,
+      },
+    );
+    const visibilityFilter = visibilitySql.replace(/^WHERE\s*/, "") || "1 = 1";
 
     // Do not calculate an index for an item the Explorer deliberately excludes.
     // Without this check, its position can point at the following visible item.
     const target = db
       .prepare(`SELECT 1 FROM files WHERE media_id = ? AND ${visibilityFilter}`)
-      .get(itemId);
+      .get(itemId, ...visibilityParams);
     if (!target) return null;
 
     // Use media_id for a stable, deterministic descending sort (newest first)
@@ -3175,7 +3180,7 @@ ipcMain.handle("get-index-of-item", async (event, { itemId, settings = {} }) => 
         AND ${visibilityFilter}
     `);
 
-    const row = stmt.get(itemId);
+    const row = stmt.get(itemId, ...visibilityParams);
     if (!row) return null;
 
     return row.idx; // 0-based index
@@ -5085,8 +5090,7 @@ ipcMain.handle("people:list", () => {
         source.width AS imageWidth,
         source.height AS imageHeight,
         COUNT(member.id) AS faceCount,
-        COUNT(DISTINCT member.file_id) AS itemCount,
-        GROUP_CONCAT(DISTINCT member.file_id) AS fileIds
+        COUNT(DISTINCT member.file_id) AS itemCount
       FROM ${PEOPLE_TABLE} p
       JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.person_id = p.id
       JOIN ${FACE_TABLE} member ON member.id = assignment.face_id
@@ -5094,13 +5098,31 @@ ipcMain.handle("people:list", () => {
       JOIN files source ON source.id = cover.file_id
       GROUP BY p.id
       ORDER BY itemCount DESC, faceCount DESC, p.id ASC
-    `).all().map((row) => ({
-      ...row,
-      fileIds: String(row.fileIds ?? "").split(",").map(Number).filter(Number.isInteger),
-    }));
+    `).all();
     return { success: true, data: rows };
   } catch (error) {
     console.error("people:list error:", error);
+    return { success: false, error: error.message, data: [] };
+  }
+});
+
+ipcMain.handle("people:list-person-files", (_event, { personId } = {}) => {
+  try {
+    initDatabase();
+    const parsedPersonId = Number(personId);
+    if (!Number.isInteger(parsedPersonId) || ![FACE_TABLE, FACE_ASSIGNMENT_TABLE].every(hasDatabaseTable)) {
+      return { success: true, data: [] };
+    }
+    const data = db.prepare(`
+      SELECT DISTINCT face.file_id AS fileId
+      FROM ${FACE_TABLE} face
+      JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = face.id
+      WHERE assignment.person_id = ?
+      ORDER BY face.file_id ASC
+    `).all(parsedPersonId).map((row) => row.fileId);
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:list-person-files error:", error);
     return { success: false, error: error.message, data: [] };
   }
 });

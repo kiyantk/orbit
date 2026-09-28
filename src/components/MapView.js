@@ -171,71 +171,58 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
             iconAnchor: [5, 5],
           }),
         });
-        marker.on("click", () => {
-          if (!marker.getPopup()) {
-            const {
-              filename,
-              date,
-              device,
-              country,
-              altitude,
-              item_id,
-              id,
-              thumbnail_path,
-            } = p.popup;
+        const {
+          filename,
+          date,
+          device,
+          country,
+          altitude,
+          item_id,
+          thumbnail_path,
+        } = p.popup;
+        const thumbSrc = thumbnail_path
+          ? `orbit://thumbs/${item_id}_thumb.jpg`
+          : null;
 
-            const thumbSrc = thumbnail_path
-              ? `orbit://thumbs/${item_id}_thumb.jpg`
-              : null;
+        // Bind the popup when the marker is created rather than inside its
+        // click handler. Leaflet can open a newly bound popup during the same
+        // click event, which previously made the DOM click listener race the
+        // popup lifecycle.
+        marker.bindPopup(`
+          <div class="map-popup-image-wrapper">
+            ${
+              thumbSrc
+                ? `<img
+                     src="${thumbSrc}"
+                     alt="${filename}"
+                     class="map-popup-image"
+                   />`
+                : ""
+            }
+            <div class="map-popup-open-label">Open</div>
+          </div>
 
-            marker
-              .bindPopup(
-                `
-                  <div class="map-popup-image-wrapper">
-                    ${
-                      thumbSrc
-                        ? `<img 
-                             src="${thumbSrc}" 
-                             alt="${filename}" 
-                             class="map-popup-image"
-                           />`
-                        : ""
-                    }
-                    <div class="map-popup-open-label">Open</div>
-                  </div>
-                  
-                  <b>${filename}</b><br>
-                  ${formatTimestamp(date)}<br>
-                  ${device || "Unknown"}<br>
-                  ${country || "Unknown"}
-                  ${altitude ? ` | ${altitude.toFixed(0)}m` : ""}
-                `,
-              );
-            
-            marker.once("popupopen", (e) => {
-              requestAnimationFrame(() => {
-                const popup = e.popup.getElement();
-              
-                const wrapper = popup?.querySelector(
-                  ".map-popup-image-wrapper",
-                );
-              
-                if (!wrapper) {
-                  console.warn("Popup wrapper missing");
-                  return;
-                }
-              
-                wrapper.addEventListener("click", () => {
-                  onRevealItem({
-                    ...p.popup,
-                    media_id: p.popup.id,
-                  });
-                });
-              });
+          <b>${filename}</b><br>
+          ${formatTimestamp(date)}<br>
+          ${device || "Unknown"}<br>
+          ${country || "Unknown"}
+          ${altitude ? ` | ${altitude.toFixed(0)}m` : ""}
+        `);
+
+        marker.on("popupopen", (event) => {
+          const wrapper = event.popup
+            .getElement()
+            ?.querySelector(".map-popup-image-wrapper");
+          if (!wrapper) return;
+
+          wrapper.onclick = (clickEvent) => {
+            clickEvent.preventDefault();
+            clickEvent.stopPropagation();
+            onRevealItem({
+              ...p.popup,
+              media_id: p.popup.id,
             });
-            
-            marker.openPopup();
-          }
+          };
         });
         return marker;
       });

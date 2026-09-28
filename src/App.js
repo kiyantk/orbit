@@ -156,6 +156,14 @@ const App = () => {
   };
 
   const revealItemInExplorer = (item) => {
+    // A map result is not constrained by Explorer's current filters/search.
+    // Reset that state before calculating the item's position so the target is
+    // guaranteed to exist in the grid we scroll to.
+    setFilters({});
+    setActiveExplorerPersonId(null);
+    setExplorerScroll(0);
+    setActionPanelKey((key) => key + 1);
+    setSelectedItem(null);
     setActiveView("explore");
     setItemToReveal(item);
   };
@@ -312,8 +320,13 @@ const App = () => {
   };
 
   useEffect(() => {
-    if (activeView !== "explore") setActiveExplorerPersonId(null);
-  }, [activeView]);
+    if (activeView !== "explore") {
+      setActiveExplorerPersonId(null);
+      return;
+    }
+    const personId = Number(filters?._facePersonId);
+    setActiveExplorerPersonId(Number.isInteger(personId) ? personId : null);
+  }, [activeView, filters?._facePersonId]);
 
   // Apply new settings from Settings popup
   const applySettings = (newSettings) => {
