@@ -583,6 +583,7 @@ const SettingsView = ({
   checkStatusses,
   newTab,
   enterRemoveMode,
+  enterMetadataRefreshMode,
 }) => {
   const [selectedTab, setSelectedTab] = useState("User");
   const [settings, setSettings] = useState({
@@ -2325,6 +2326,13 @@ const SettingsView = ({
                   setShowToolsPopup(false);
                   await refreshMissingHeicFiles();
                   setShowHeicPopup(true);
+                },
+              },
+              {
+                label: "Refresh Metadata",
+                action: () => {
+                  setShowToolsPopup(false);
+                  enterMetadataRefreshMode();
                 },
               },
               {

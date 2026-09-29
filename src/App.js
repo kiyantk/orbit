@@ -460,6 +460,23 @@ const App = () => {
                 setExplorerMode({ enabled: true, value: null, type: "remove" });
                 setActiveView("explore");
               }}
+              enterMetadataRefreshMode={() => {
+                setFilters({});
+                setExplorerScroll(0);
+                setExplorerMode({
+                  enabled: true,
+                  value: null,
+                  type: "metadata",
+                  metadataFields: [
+                    "fileDates",
+                    "takenDate",
+                    "location",
+                    "camera",
+                    "mediaDetails",
+                  ],
+                });
+                setActiveView("explore");
+              }}
             />
           )}
           {activeView === "stats" && (

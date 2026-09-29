@@ -21,6 +21,53 @@ const GUTTER = 10;
 const PAGE_SIZE = 200;
 const DRAG_THRESHOLD = 6;
 
+const METADATA_REFRESH_FIELD_OPTIONS = [
+  { id: "fileDates", label: "File dates (Created At and Modified At)" },
+  { id: "takenDate", label: "Taken At" },
+  { id: "location", label: "Location" },
+  { id: "camera", label: "Camera details" },
+  { id: "mediaDetails", label: "Media details (type, dimensions, orientation)" },
+];
+
+const MetadataRefreshFieldsPopup = ({ fields, onChange, onClose }) => {
+  const selected = new Set(fields);
+  const allSelected = selected.size === METADATA_REFRESH_FIELD_OPTIONS.length;
+  const toggle = (field) => {
+    const next = new Set(selected);
+    next.has(field) ? next.delete(field) : next.add(field);
+    onChange([...next]);
+  };
+
+  return (
+    <Popup
+      title="Refresh metadata fields"
+      width={520}
+      actions={[{ label: "Done", kind: "secondary", onClick: onClose }]}
+    >
+      <p style={{ marginBottom: 12 }}>
+        Choose which values to recollect for the selected files. Their existing rows, thumbnails, tags, and memories stay unchanged.
+      </p>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontWeight: 600 }}>
+        <input
+          type="checkbox"
+          checked={allSelected}
+          onChange={() => onChange(allSelected ? [] : METADATA_REFRESH_FIELD_OPTIONS.map(({ id }) => id))}
+        />
+        All metadata
+      </label>
+      {METADATA_REFRESH_FIELD_OPTIONS.map(({ id, label }) => (
+        <label key={id} style={{ display: "flex", alignItems: "center", gap: 8, margin: "7px 0" }}>
+          <input type="checkbox" checked={selected.has(id)} onChange={() => toggle(id)} />
+          {label}
+        </label>
+      ))}
+      <p style={{ marginTop: 12, opacity: 0.7, fontSize: 13 }}>
+        Refreshing only file dates skips reading embedded EXIF metadata.
+      </p>
+    </Popup>
+  );
+};
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function formatLocalDateString(str) {
   if (!str) return "";
@@ -162,7 +209,7 @@ const Cell = React.memo(
 
     const isInAddMode =
       explorerMode?.enabled &&
-      (explorerMode.type === "tag" || explorerMode.type === "memory");
+      ["tag", "memory", "metadata"].includes(explorerMode.type);
     const isInRemoveMode =
       explorerMode?.enabled && explorerMode.type === "remove";
 
@@ -294,6 +341,12 @@ const ExplorerView = ({
   const [selectedItemIds, setSelectedItemIds] = useState(new Set());
   const [addModeSelected, setAddModeSelected] = useState(new Set());
   const [removeModeSelected, setRemoveModeSelected] = useState(new Set());
+  const [metadataRefreshBusy, setMetadataRefreshBusy] = useState(false);
+  const [metadataRefreshProgress, setMetadataRefreshProgress] = useState({
+    completed: 0,
+    total: 0,
+  });
+  const [showMetadataFields, setShowMetadataFields] = useState(false);
   const [contextMenu, setContextMenu] = useState(null);
   const [facePicker, setFacePicker] = useState(null);
   const [personPicker, setPersonPicker] = useState(null);
@@ -767,6 +820,46 @@ const fetchTotalCount = useCallback(async (generation) => {
     }
   }, []);
 
+  const refreshSelectedMetadata = useCallback(async () => {
+    const fields = explorerMode.metadataFields || METADATA_REFRESH_FIELD_OPTIONS.map(({ id }) => id);
+    if (!addModeSelected.size) return;
+    if (!fields.length) {
+      enqueueSnackbar("Choose at least one metadata field.", { variant: "warning" });
+      setShowMetadataFields(true);
+      return;
+    }
+    setMetadataRefreshBusy(true);
+    setMetadataRefreshProgress({ completed: 0, total: addModeSelected.size });
+    try {
+      const result = await window.electron.ipcRenderer.invoke("refresh-file-metadata", {
+        ids: [...addModeSelected],
+        fields,
+      });
+      if (!result?.success) throw new Error(result?.error || "Unable to refresh metadata.");
+      enqueueSnackbar(result.message, { variant: result.skipped ? "warning" : "success" });
+      setExplorerMode({ enabled: false, value: null, type: "" });
+      setAddModeSelected(new Set());
+      setSelectedItem(null);
+      onSelect(null, "single");
+      refreshExplorerForPeopleAction();
+    } catch (error) {
+      enqueueSnackbar(error.message || "Unable to refresh metadata.", { variant: "error" });
+    } finally {
+      setMetadataRefreshBusy(false);
+    }
+  }, [addModeSelected, explorerMode.metadataFields, onSelect, refreshExplorerForPeopleAction, setExplorerMode]);
+
+  useEffect(() => window.electron.ipcRenderer.on(
+    "metadata-refresh-progress",
+    (progress) => {
+      if (!progress || !Number.isFinite(progress.total)) return;
+      setMetadataRefreshProgress({
+        completed: Number(progress.completed) || 0,
+        total: Number(progress.total) || 0,
+      });
+    },
+  ), []);
+
   // ─── HEIC prefetch ────────────────────────────────────────────────────────
   const handleMouseEnter = useCallback(
     (item) => {
@@ -925,7 +1018,7 @@ const fetchTotalCount = useCallback(async (generation) => {
   // ─── Drag-select mouse handlers ───────────────────────────────────────────
   const getDragSelectionMode = useCallback(() => {
     if (!explorerMode?.enabled) return null;
-    if (explorerMode.type === "tag" || explorerMode.type === "memory") {
+    if (["tag", "memory", "metadata"].includes(explorerMode.type)) {
       return "add";
     }
     if (explorerMode.type === "remove") return "remove";
@@ -1367,7 +1460,7 @@ useEffect(() => {
 
       const isAddMode =
         explorerMode?.enabled &&
-        (explorerMode.type === "tag" || explorerMode.type === "memory");
+        ["tag", "memory", "metadata"].includes(explorerMode.type);
 
       // Ctrl+A: select all / deselect all in add mode
       if ((e.key === "a" || e.key === "A") && e.ctrlKey) {
@@ -1600,6 +1693,8 @@ useEffect(() => {
   const isAddMode =
     explorerMode?.enabled &&
     (explorerMode.type === "tag" || explorerMode.type === "memory");
+  const isMetadataRefreshMode =
+    explorerMode?.enabled && explorerMode.type === "metadata";
   const isRemoveMode = explorerMode?.enabled && explorerMode.type === "remove";
   const canShowDateScroll =
     scale >= 0.4 &&
@@ -1787,6 +1882,40 @@ useEffect(() => {
         </FloatingBanner>
       )}
 
+      {isMetadataRefreshMode && (
+        <FloatingBanner>
+          <span>Refresh Metadata Mode</span>
+          <BannerButton onClick={() => setShowMetadataFields(true)} disabled={metadataRefreshBusy}>
+            Fields
+          </BannerButton>
+          <BannerButton
+            onClick={refreshSelectedMetadata}
+            disabled={metadataRefreshBusy || !addModeSelected.size}
+          >
+            {metadataRefreshBusy
+              ? `Refreshing… (${metadataRefreshProgress.completed}/${metadataRefreshProgress.total})`
+              : `Refresh Selected (${addModeSelected.size})`}
+          </BannerButton>
+          <BannerButton
+            disabled={metadataRefreshBusy}
+            onClick={() => {
+              setExplorerMode({ enabled: false, value: null, type: "" });
+              setAddModeSelected(new Set());
+            }}
+          >
+            <FontAwesomeIcon icon={faXmark} />
+          </BannerButton>
+        </FloatingBanner>
+      )}
+
+      {showMetadataFields && isMetadataRefreshMode && (
+        <MetadataRefreshFieldsPopup
+          fields={explorerMode.metadataFields || METADATA_REFRESH_FIELD_OPTIONS.map(({ id }) => id)}
+          onChange={(metadataFields) => setExplorerMode({ ...explorerMode, metadataFields })}
+          onClose={() => setShowMetadataFields(false)}
+        />
+      )}
+
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
@@ -1872,8 +2001,8 @@ const btnStyle = {
 const FloatingBanner = ({ children }) => (
   <div style={bannerStyle}>{children}</div>
 );
-const BannerButton = ({ children, onClick }) => (
-  <button style={btnStyle} onClick={onClick}>
+const BannerButton = ({ children, onClick, disabled = false }) => (
+  <button style={{ ...btnStyle, opacity: disabled ? 0.55 : 1 }} onClick={onClick} disabled={disabled}>
     {children}
   </button>
 );

@@ -1597,6 +1597,126 @@ ipcMain.handle("index-files", async (event, folders) => {
   }
 });
 
+// Refreshing metadata deliberately updates an existing row in place.  It must
+// never use the indexing insert path: media IDs, thumbnails, tags, memories,
+// and other derived index data remain associated with the same file row.
+const METADATA_REFRESH_GROUPS = {
+  fileDates: ["created", "modified"],
+  takenDate: ["create_date", "create_date_local"],
+  location: ["latitude", "longitude", "altitude", "country"],
+  camera: [
+    "device_model",
+    "camera_make",
+    "camera_model",
+    "lens_model",
+    "iso",
+    "software",
+    "offset_time_original",
+    "megapixels",
+    "exposure_time",
+    "color_space",
+    "flash",
+    "aperture",
+    "focal_length",
+    "focal_length_35mm",
+  ],
+  mediaDetails: [
+    "file_type",
+    "capture_type",
+    "width",
+    "height",
+    "orientation",
+  ],
+};
+
+ipcMain.handle("refresh-file-metadata", async (event, payload = {}) => {
+  try {
+    initDatabase();
+
+    const ids = Array.from(
+      new Set((Array.isArray(payload.ids) ? payload.ids : []).map(Number)),
+    ).filter(Number.isInteger);
+    const fields = Array.from(
+      new Set(
+        (Array.isArray(payload.fields) ? payload.fields : [])
+          .filter((field) => Object.hasOwn(METADATA_REFRESH_GROUPS, field)),
+      ),
+    );
+    if (!ids.length) throw new Error("Select at least one item to refresh.");
+    if (!fields.length) throw new Error("Select at least one metadata field.");
+
+    const columns = Array.from(
+      new Set(fields.flatMap((field) => METADATA_REFRESH_GROUPS[field])),
+    );
+    const rows = db
+      .prepare(`SELECT id, path FROM files WHERE id IN (${ids.map(() => "?").join(",")})`)
+      .all(...ids);
+    const needsFileStats = fields.includes("fileDates");
+    const needsExifMetadata = fields.some((field) => field !== "fileDates");
+    const updateStmt = db.prepare(
+      `UPDATE files SET ${columns.map((column) => `${column} = ?`).join(", ")} WHERE id = ?`,
+    );
+    const limit = pLimit(METADATA_CONCURRENCY);
+    const updates = [];
+    const failures = [];
+    let completed = 0;
+
+    await Promise.all(
+      rows.map((row) =>
+        limit(async () => {
+          try {
+            let stats;
+            let metadata;
+            if (needsFileStats) stats = await fsPromises.stat(row.path);
+            if (needsExifMetadata) metadata = await extractMetadata(row.path);
+
+            const values = columns.map((column) => {
+              if (column === "created") return Math.floor(stats.birthtimeMs / 1000);
+              if (column === "modified") return Math.floor(stats.mtimeMs / 1000);
+              if (column === "country") {
+                return Array.isArray(metadata.country)
+                  ? metadata.country.join(", ")
+                  : (metadata.country ?? null);
+              }
+              return metadata[column] ?? null;
+            });
+            updates.push({ values, id: row.id });
+          } catch (error) {
+            failures.push({ id: row.id, error: error.message });
+            console.warn(`Metadata refresh skipped ${row.path}: ${error.code || error.message}`);
+          } finally {
+            completed += 1;
+            event.sender.send("metadata-refresh-progress", {
+              completed,
+              total: rows.length,
+            });
+          }
+        }),
+      ),
+    );
+
+    if (updates.length) {
+      await dbWriteLimit(() => {
+        const applyUpdates = db.transaction((items) => {
+          for (const item of items) updateStmt.run(...item.values, item.id);
+        });
+        applyUpdates(updates);
+      });
+    }
+
+    const skipped = ids.length - rows.length + failures.length;
+    return {
+      success: true,
+      updated: updates.length,
+      skipped,
+      message: `Refreshed metadata for ${updates.length} item${updates.length === 1 ? "" : "s"}${skipped ? `; skipped ${skipped}` : ""}.`,
+    };
+  } catch (err) {
+    console.error("Error refreshing file metadata:", err);
+    return { success: false, error: err.message };
+  }
+});
+
 async function generateThumbnail(filePath, id) {
   const ext = path.extname(filePath).toLowerCase();
   const imageExtensions = [
