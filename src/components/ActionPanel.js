@@ -1,6 +1,7 @@
 import { faSearch, faUndo } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import Select, { components } from "react-select";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -8,16 +9,16 @@ const EMPTY_FILTERS = {
   dateExact: "",
   dateFrom: "",
   dateTo: "",
-  device: "",
-  folder: "",
-  filetype: "",
-  mediaType: "",
-  captureType: "",
-  country: "",
-  year: "",
-  tagId: "",
-  age: "",
-  lens: "",
+  device: [],
+  folder: [],
+  filetype: [],
+  mediaType: [],
+  captureType: [],
+  country: [],
+  year: [],
+  tagId: [],
+  age: [],
+  lens: [],
   ids: null,
 };
 
@@ -31,7 +32,12 @@ const DEFAULT_SHUFFLE_SETTINGS = {
 
 function hasActiveExplorerConstraint(filters) {
   return Object.entries(filters || {}).some(([key, value]) => {
-    if (key === "searchBy" || key === "sortBy" || key === "sortOrder") {
+    if (
+      key === "searchBy" ||
+      key === "sortBy" ||
+      key === "sortOrder" ||
+      key === "tagMatch"
+    ) {
       return false;
     }
 
@@ -40,6 +46,11 @@ function hasActiveExplorerConstraint(filters) {
     return value !== null && value !== undefined && value !== "" && value !== false;
   });
 }
+
+const asFilterValues = (value) =>
+  (Array.isArray(value) ? value : value ? [value] : []).filter(
+    (item) => item !== "" && item !== null && item !== undefined,
+  );
 
 // ─── Generic filter hook ───────────────────────────────────────────────────────
 
@@ -52,12 +63,12 @@ function useFilterState(initial = EMPTY_FILTERS) {
       if (field === "dateExact" && value) {
         next.dateFrom = "";
         next.dateTo = "";
-        next.year = "";
-        next.age = "";
+        next.year = [];
+        next.age = [];
       } else if ((field === "dateFrom" || field === "dateTo") && value) {
         next.dateExact = "";
-        next.year = "";
-        next.age = "";
+        next.year = [];
+        next.age = [];
       }
       if (field === "dateFrom" && next.dateTo && value > next.dateTo)
         next.dateTo = value;
@@ -67,37 +78,28 @@ function useFilterState(initial = EMPTY_FILTERS) {
     });
   };
 
-  const handleYearChange = (year) => {
+  const handleYearChange = (years) => {
     setFilters((prev) => {
-      if (!year)
-        return { ...prev, year: "", dateFrom: "", dateTo: "", age: "" };
       return {
         ...prev,
-        year,
-        age: "",
-        dateFrom: `${year}-01-01`,
-        dateTo: `${year}-12-31`,
+        year: asFilterValues(years),
+        age: [],
+        dateExact: "",
+        dateFrom: "",
+        dateTo: "",
       };
     });
   };
 
-  const handleAgeChange = (age, birthDate) => {
+  const handleAgeChange = (ages) => {
     setFilters((prev) => {
-      if (!age || !birthDate)
-        return { ...prev, age: "", dateFrom: "", dateTo: "" };
-      const birth = new Date(birthDate);
-      const dateFrom = new Date(birth);
-      dateFrom.setFullYear(birth.getFullYear() + Number(age));
-      const dateTo = new Date(birth);
-      dateTo.setFullYear(birth.getFullYear() + Number(age) + 1);
-      dateTo.setDate(dateTo.getDate() - 1);
       return {
         ...prev,
-        age,
-        year: "",
+        age: asFilterValues(ages),
+        year: [],
         dateExact: "",
-        dateFrom: dateFrom.toISOString().slice(0, 10),
-        dateTo: dateTo.toISOString().slice(0, 10),
+        dateFrom: "",
+        dateTo: "",
       };
     });
   };
@@ -291,9 +293,105 @@ const TextSearchInput = ({ status, value, isSearching, onChange, onSearch, onRes
 
 // ─── Shared FilterPanel component ─────────────────────────────────────────────
 
+const TagMatchMenuList = (props) => {
+  const { showTagMatchControls, tagMatchMode, onTagMatchChange } =
+    props.selectProps;
+
+  return (
+    <components.MenuList {...props}>
+      {showTagMatchControls && (
+        <div
+          className="filter-select__menu-header"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <div className="tag-match-toggle" role="group" aria-label="Tag match mode">
+            <button
+              className={tagMatchMode === "or" ? "active" : ""}
+              onClick={() => onTagMatchChange("or")}
+              title="Show files with any selected tag"
+            >
+              OR
+            </button>
+            <button
+              className={tagMatchMode === "and" ? "active" : ""}
+              onClick={() => onTagMatchChange("and")}
+              title="Show files with every selected tag"
+            >
+              AND
+            </button>
+          </div>
+        </div>
+      )}
+      {props.children}
+    </components.MenuList>
+  );
+};
+
+const TAG_MATCH_COMPONENTS = { MenuList: TagMatchMenuList };
+
+const MultiSelectFilter = ({
+  value,
+  options,
+  onChange,
+  minWidth = 135,
+  isTagFilter = false,
+  showTagMatchControls = false,
+  tagMatchMode = null,
+  onTagMatchChange = null,
+}) => {
+  const selectedValues = asFilterValues(value).map(String);
+  const selectedOptions = selectedValues.map(
+    (selectedValue) =>
+      options.find((option) => option.value === selectedValue) || {
+        value: selectedValue,
+        label: selectedValue,
+      },
+  );
+  return (
+    <Select
+      isMulti
+      closeMenuOnSelect={false}
+      hideSelectedOptions={false}
+      className="filter-multi-select"
+      classNamePrefix="filter-select"
+      components={isTagFilter ? TAG_MATCH_COMPONENTS : undefined}
+      styles={{
+        container: (base) => ({
+          ...base,
+          flex: "0 0 auto",
+          minWidth,
+          width: "max-content",
+        }),
+        control: (base) => ({ ...base, minWidth, width: "max-content" }),
+        menuList: (base) =>
+          isTagFilter ? { ...base, paddingTop: 0 } : base,
+      }}
+      menuPortalTarget={document.body}
+      menuPosition="fixed"
+      showTagMatchControls={showTagMatchControls}
+      tagMatchMode={tagMatchMode}
+      onTagMatchChange={onTagMatchChange}
+      options={options}
+      value={selectedOptions}
+      onChange={(selected) =>
+        onChange((selected ?? []).map((option) => option.value))
+      }
+      placeholder="All"
+      noOptionsMessage={() => "No options"}
+    />
+  );
+};
+
 const FilterPanel = ({ filters, options, settings, handlers, onReset }) => {
   const { handleDateChange, handleYearChange, handleAgeChange, setFilters } =
     handlers;
+  const hasYearOrAgeFilter =
+    asFilterValues(filters.year).length > 0 || asFilterValues(filters.age).length > 0;
+  const tagIds = asFilterValues(filters.tagId);
+  const tagMatchMode = filters.tagMatch === "and" ? "and" : "or";
 
   return (
     <div className="filter-panel">
@@ -306,17 +404,14 @@ const FilterPanel = ({ filters, options, settings, handlers, onReset }) => {
 
       <div>
         <label>Year</label>
-        <select
+        <MultiSelectFilter
           value={filters.year}
-          onChange={(e) => handleYearChange(e.target.value)}
-        >
-          <option value="">All</option>
-          {options.years.map((y) => (
-            <option key={y} value={y}>
-              {y}
-            </option>
-          ))}
-        </select>
+          options={options.years.map((year) => ({
+            value: String(year),
+            label: String(year),
+          }))}
+          onChange={handleYearChange}
+        />
       </div>
 
       <div>
@@ -326,7 +421,9 @@ const FilterPanel = ({ filters, options, settings, handlers, onReset }) => {
           value={filters.dateExact}
           min={options.minDate}
           max={options.maxDate}
-          disabled={!!filters.dateFrom || !!filters.dateTo}
+          disabled={
+            !!filters.dateFrom || !!filters.dateTo || hasYearOrAgeFilter
+          }
           onChange={(e) => handleDateChange("dateExact", e.target.value)}
         />
       </div>
@@ -338,7 +435,7 @@ const FilterPanel = ({ filters, options, settings, handlers, onReset }) => {
           value={filters.dateFrom}
           min={options.minDate}
           max={options.maxDate}
-          disabled={!!filters.dateExact}
+          disabled={!!filters.dateExact || hasYearOrAgeFilter}
           onChange={(e) => handleDateChange("dateFrom", e.target.value)}
         />
       </div>
@@ -350,7 +447,7 @@ const FilterPanel = ({ filters, options, settings, handlers, onReset }) => {
           value={filters.dateTo}
           min={options.minDate}
           max={options.maxDate}
-          disabled={!!filters.dateExact}
+          disabled={!!filters.dateExact || hasYearOrAgeFilter}
           onChange={(e) => handleDateChange("dateTo", e.target.value)}
         />
       </div>
@@ -364,89 +461,93 @@ const FilterPanel = ({ filters, options, settings, handlers, onReset }) => {
       ].map(([label, key, opts]) => (
         <div key={key}>
           <label>{label}</label>
-          <select
+          <MultiSelectFilter
             value={filters[key]}
-            onChange={(e) =>
-              setFilters((prev) => ({ ...prev, [key]: e.target.value }))
+            minWidth={
+              key === "device"
+                ? 200
+                : key === "captureType"
+                  ? 150
+                  : key === "lens"
+                    ? 350
+                    : 135
             }
-          >
-            <option value="">All</option>
-            {(opts ?? []).map((o) => (
-              <option key={o} value={o}>
-                {o}
-              </option>
-            ))}
-          </select>
+            options={(opts ?? []).map((option) => ({
+              value: String(option),
+              label: String(option),
+            }))}
+            onChange={(value) =>
+              setFilters((prev) => ({ ...prev, [key]: value }))
+            }
+          />
         </div>
       ))}
 
       <div>
         <label>Source</label>
-        <select
+        <MultiSelectFilter
           value={filters.folder}
-          onChange={(e) =>
-            setFilters((prev) => ({ ...prev, folder: e.target.value }))
+          minWidth={350}
+          options={options.folders.map((folder) => ({
+            value: String(folder.value),
+            label: String(folder.label),
+          }))}
+          onChange={(value) =>
+            setFilters((prev) => ({ ...prev, folder: value }))
           }
-        >
-          <option value="">All</option>
-          {options.folders.map((f) => (
-            <option key={f.value} value={f.value}>
-              {f.label}
-            </option>
-          ))}
-        </select>
+        />
       </div>
 
-      <div>
+      <div className="tag-filter">
         <label>Tag</label>
-        <select
+        <MultiSelectFilter
           value={filters.tagId}
-          onChange={(e) =>
-            setFilters((prev) => ({ ...prev, tagId: e.target.value }))
+          options={(options.tags ?? []).map((tag) => ({
+            value: String(tag.id),
+            label: tag.name,
+          }))}
+          isTagFilter
+          tagMatchMode={tagIds.length > 1 ? tagMatchMode : null}
+          showTagMatchControls={tagIds.length > 1}
+          onTagMatchChange={(mode) =>
+            setFilters((prev) => {
+              if (mode === "and") return { ...prev, tagMatch: "and" };
+              const next = { ...prev };
+              delete next.tagMatch;
+              return next;
+            })
           }
-        >
-          <option value="">All</option>
-          {(options.tags ?? []).map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
+          onChange={(value) =>
+            setFilters((prev) => ({ ...prev, tagId: value }))
+          }
+        />
       </div>
 
       <div>
         <label>Country</label>
-        <select
+        <MultiSelectFilter
           value={filters.country}
-          onChange={(e) =>
-            setFilters((prev) => ({ ...prev, country: e.target.value }))
+          options={options.countries.filter(Boolean).map((country) => ({
+            value: String(country),
+            label: String(country),
+          }))}
+          onChange={(value) =>
+            setFilters((prev) => ({ ...prev, country: value }))
           }
-        >
-          <option value="">All</option>
-          {options.countries.filter(Boolean).map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
+        />
       </div>
 
       {settings?.birthDate && (
         <div>
           <label>Age</label>
-          <select
+          <MultiSelectFilter
             value={filters.age}
-            onChange={(e) =>
-              handleAgeChange(e.target.value, settings.birthDate)
-            }
-          >
-            <option value="">All</option>
-            {[...options.ages].reverse().map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
+            options={[...options.ages].reverse().map((age) => ({
+              value: String(age),
+              label: String(age),
+            }))}
+            onChange={handleAgeChange}
+          />
         </div>
       )}
 
@@ -702,7 +803,7 @@ const ActionPanel = ({
     resetSearch();
   };
   const handleExploreAge = (age) => {
-    explore.handleAgeChange(age, settings?.birthDate);
+    explore.handleAgeChange(age);
     resetSort();
     resetSearch();
   };

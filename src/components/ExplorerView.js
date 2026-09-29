@@ -377,6 +377,7 @@ const ExplorerView = ({
   const isRestoringScrollRef = useRef(false);
   const prefetchTimer = useRef(null);
   const loadMoreTimeout = useRef(null);
+  const timelineRequestId = useRef(0);
   const selectedItemRef = useRef(null);
   const onSelectRef = useRef(null);
   const itemDeletedRef = useRef(null);
@@ -1285,20 +1286,21 @@ useEffect(() => {
   }, [scrollPosition]);
 
   useEffect(() => {
-    if (!currentSettings?.explorerDateScroll) return;
+    const requestId = ++timelineRequestId.current;
+    if (!currentSettings?.explorerDateScroll) {
+      setMonthData(null);
+      return;
+    }
+
     setMonthData(null);
     window.electron.ipcRenderer
       .invoke("fetch-timeline-months", {
         filters: filters || {},
         sortOrder: filters?.sortOrder ?? "desc",
-        settings: {
-          hideScreenshotsAndScreenRecordings:
-            !!currentSettings?.hideScreenshotsAndScreenRecordings,
-          hiddenFolders: currentSettings?.hiddenFolders || [],
-        },
+        settings: currentSettings || {},
       })
       .then((data) => {
-        if (data?.length) setMonthData(data);
+        if (timelineRequestId.current === requestId) setMonthData(data || []);
       });
   }, [
     filters,

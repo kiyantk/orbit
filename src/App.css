@@ -305,6 +305,19 @@ body {
   /* border: 1px solid #4f4b52; */
   border: 1px solid var(--color-border-default);
   border-radius: 2px;
+  box-sizing: border-box;
+  height: 30px;
+}
+
+.action-panel input:hover,
+.action-panel select:hover {
+  border-color: var(--color-control-hover-border);
+}
+
+.action-panel input:focus,
+.action-panel select:focus {
+  border-color: var(--color-control-focus-border);
+  outline: none;
 }
 
 .action-panel-reset {
@@ -334,7 +347,9 @@ body {
 }
 
 .sort-panel label {
-  line-height: 1.15;
+  align-items: center;
+  display: flex;
+  line-height: normal;
 }
 
 .sort-panel > button {
@@ -368,13 +383,176 @@ body {
   user-select: none;
 }
 
-.filter-panel div {
+.filter-panel > div {
   display: grid;
+}
+
+.sort-panel .action-panel-reset,
+.search-panel .action-panel-reset {
+  align-items: center;
+  display: flex;
+  height: 30px;
+}
+
+.sort-panel .action-panel-reset button,
+.search-panel .action-panel-reset button {
+  align-items: center;
+  display: flex;
+  height: 30px;
+  justify-content: center;
+  width: 40px;
 }
 
 .filter-panel label {
   margin-bottom: 8px;
   line-height: 1;
+}
+
+.filter-multi-select {
+  min-width: 135px;
+}
+
+.filter-select__control {
+  height: 30px !important;
+  min-height: 30px !important;
+  background: var(--color-surface-sunken) !important;
+  border: 1px solid var(--color-border-default) !important;
+  border-radius: 2px !important;
+  box-shadow: none !important;
+  flex-wrap: nowrap !important;
+}
+
+.filter-select__control:hover {
+  border-color: var(--color-control-hover-border) !important;
+}
+
+.filter-select__control--is-focused {
+  border-color: var(--color-control-focus-border) !important;
+}
+
+.filter-select__value-container {
+  padding: 1px 5px !important;
+  flex: 0 0 auto !important;
+  flex-wrap: nowrap !important;
+  justify-content: flex-start;
+  overflow: visible;
+}
+
+.filter-select__multi-value {
+  flex: 0 0 auto;
+  margin: 1px 2px !important;
+  background: var(--color-select-chip) !important;
+  border-radius: 2px !important;
+}
+
+.filter-select__input-container,
+.filter-select__single-value,
+.filter-select__placeholder,
+.filter-select__menu-notice {
+  color: var(--color-text-primary) !important;
+}
+
+.filter-select__input-container {
+  flex: 0 1 auto !important;
+  min-width: 2px;
+}
+
+.filter-select__placeholder {
+  margin-left: 0 !important;
+  margin-right: 2px !important;
+  text-align: left;
+}
+
+.filter-multi-select input {
+  background: transparent !important;
+  border: 0 !important;
+  box-sizing: content-box !important;
+  height: auto !important;
+  padding: 0 !important;
+}
+
+.filter-select__multi-value__label {
+  color: var(--color-text-primary) !important;
+  font-size: 12px;
+}
+
+.filter-select__multi-value__remove {
+  color: var(--color-text-primary) !important;
+}
+
+.filter-select__multi-value__remove:hover {
+  background: var(--color-surface-hover) !important;
+}
+
+.filter-select__indicator {
+  color: var(--color-text-secondary) !important;
+  padding: 2px 4px !important;
+}
+
+.filter-select__indicator-separator {
+  align-self: stretch;
+  background: var(--color-border-default) !important;
+  margin: 4px 0 !important;
+}
+
+.filter-select__menu {
+  background: var(--color-surface-sunken) !important;
+  border: 1px solid var(--color-border-default);
+  border-radius: 2px !important;
+}
+
+.filter-select__menu-portal {
+  z-index: 1000 !important;
+}
+
+.filter-select__option {
+  color: var(--color-text-primary) !important;
+  background: transparent !important;
+}
+
+.filter-select__option--is-focused {
+  background: var(--color-select-option-hover) !important;
+}
+
+.filter-select__option--is-selected {
+  background: var(--color-select-option-selected) !important;
+}
+
+.tag-match-toggle {
+  display: flex;
+  flex: 1;
+}
+
+.filter-select__menu-header {
+  border-bottom: 1px solid var(--color-border-default);
+  display: flex;
+  height: 30px;
+}
+
+.tag-match-toggle button {
+  background: var(--color-surface-control);
+  border: 0;
+  border-radius: 0;
+  border-right: 1px solid var(--color-border-default);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  flex: 1;
+  font-size: 12px;
+  height: 100%;
+  padding: 0;
+}
+
+.tag-match-toggle button:last-child {
+  border-right: 0;
+}
+
+.tag-match-toggle button:hover {
+  border-color: var(--color-control-hover-border);
+}
+
+.tag-match-toggle button.active {
+  background: var(--color-select-chip);
+  border-color: var(--color-control-focus-border);
 }
 
 .side-bar-active {
@@ -2436,7 +2614,8 @@ input[type="checkbox"] {
 }
 
 .search-panel-type-select {
-  max-height: 23.2px;
+  height: 30px;
+  max-height: none;
 }
 
 .tag-description {

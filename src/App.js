@@ -18,7 +18,12 @@ import PeopleView from "./components/PeopleView";
 
 function hasActiveExplorerConstraint(activeFilters) {
   return Object.entries(activeFilters || {}).some(([key, value]) => {
-    if (key === "searchBy" || key === "sortBy" || key === "sortOrder") {
+    if (
+      key === "searchBy" ||
+      key === "sortBy" ||
+      key === "sortOrder" ||
+      key === "tagMatch"
+    ) {
       return false;
     }
 

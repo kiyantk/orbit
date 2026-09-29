@@ -1109,6 +1109,19 @@ function buildWhereClause(rawFilters = {}, options = {}) {
     if (value !== undefined) params.push(value);
   };
 
+  // Filter state used to contain a scalar value. Keep accepting those values
+  // for saved/deep-linked views while treating arrays as a single OR group.
+  const filterValues = (value) =>
+    (Array.isArray(value) ? value : value ? [value] : []).filter(
+      (item) => item !== "" && item !== null && item !== undefined,
+    );
+  const addAny = (column, value) => {
+    const values = filterValues(value);
+    if (!values.length) return;
+    clauses.push(`${column} IN (${values.map(() => "?").join(", ")})`);
+    params.push(...values);
+  };
+
   // shared filters
   if (Array.isArray(filters.ids) && filters.ids.length) {
     clauses.push(applyIdsFilter(db, filters.ids));
@@ -1141,30 +1154,68 @@ function buildWhereClause(rawFilters = {}, options = {}) {
     add(`${localDateExpr} = date(?)`, filters.dateExact);
   }
 
-  if (filters.device) add("device_model = ?", filters.device);
-  if (filters.folder) add("folder_path = ?", filters.folder);
-  if (filters.filetype) add("extension = ?", filters.filetype);
-  if (filters.mediaType) add("file_type = ?", filters.mediaType);
-  if (filters.captureType) add("capture_type = ?", filters.captureType);
-  if (filters.lens) add("lens_model = ?", filters.lens);
-  if (filters.country) {
-    add(
-      "',' || REPLACE(country, ' ', '') || ',' LIKE ?",
-      `%,${
-        filters.country
-      },%`
+  addAny("device_model", filters.device);
+  addAny("folder_path", filters.folder);
+  addAny("extension", filters.filetype);
+  addAny("file_type", filters.mediaType);
+  addAny("capture_type", filters.captureType);
+  addAny("lens_model", filters.lens);
+
+  const years = filterValues(filters.year);
+  if (years.length) {
+    clauses.push(
+      `strftime('%Y', ${localDateExpr}) IN (${years.map(() => "?").join(", ")})`,
     );
+    params.push(...years);
   }
 
-  if (filters.tagId) {
-    clauses.push(`
-      id IN (
-        SELECT value
-        FROM tags, json_each(tags.media_ids)
-        WHERE tags.id = ?
-      )
-    `);
-    params.push(Number(filters.tagId));
+  const countries = filterValues(filters.country);
+  if (countries.length) {
+    clauses.push(
+      `(${countries
+        .map(() => "',' || REPLACE(country, ' ', '') || ',' LIKE ?")
+        .join(" OR ")})`,
+    );
+    params.push(...countries.map((country) => `%,${country},%`));
+  }
+
+  const tagIds = filterValues(filters.tagId);
+  if (tagIds.length) {
+    const tagPlaceholders = tagIds.map(() => "?").join(", ");
+    if (filters.tagMatch === "and") {
+      clauses.push(`
+        id IN (
+          SELECT value
+          FROM tags, json_each(tags.media_ids)
+          WHERE tags.id IN (${tagPlaceholders})
+          GROUP BY value
+          HAVING COUNT(DISTINCT tags.id) = ?
+        )
+      `);
+      params.push(...tagIds.map(Number), tagIds.length);
+    } else {
+      clauses.push(`
+        id IN (
+          SELECT value
+          FROM tags, json_each(tags.media_ids)
+          WHERE tags.id IN (${tagPlaceholders})
+        )
+      `);
+      params.push(...tagIds.map(Number));
+    }
+  }
+
+  const ages = filterValues(filters.age);
+  const birthDate = String(options.birthDate || "").slice(0, 10);
+  const birthDateParts = birthDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (ages.length && birthDateParts) {
+    const [, birthYear, birthMonth, birthDay] = birthDateParts;
+    const ageExpression = `
+      CAST(strftime('%Y', ${localDateExpr}) AS INTEGER) - ?
+      - CASE WHEN strftime('%m-%d', ${localDateExpr}) < ? THEN 1 ELSE 0 END
+    `;
+    clauses.push(`${ageExpression} IN (${ages.map(() => "?").join(", ")})`);
+    params.push(Number(birthYear), `${birthMonth}-${birthDay}`, ...ages.map(Number));
   }
 
   if (filters.searchBy && filters.searchTerm) {
@@ -1239,6 +1290,7 @@ ipcMain.handle(
       const { sql: whereSQL, params } = buildWhereClause(filters, {
         excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
         hiddenFolders: settings.hiddenFolders,
+        birthDate: settings.birthDate,
       });
 
       // --- sorting ---
@@ -1323,6 +1375,7 @@ ipcMain.handle("fetch-file-overview", async (event, { filters = {}, settings = {
   const { sql: whereSQL, params } = buildWhereClause(filters, {
     excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
     hiddenFolders: settings.hiddenFolders,
+    birthDate: settings.birthDate,
   });
 
   const stmt = db.prepare(`
@@ -1346,6 +1399,7 @@ ipcMain.handle(
       const { sql, params } = buildWhereClause(filters, {
         allowUndated: true,
         hiddenFolders: settings.hiddenFolders,
+        birthDate: settings.birthDate,
       });
 
       const whereSQL = [
@@ -1482,6 +1536,7 @@ ipcMain.handle("get-filtered-files-count", async (event, args = {}) => {
     const { sql, params } = buildWhereClause(filters, {
       excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
       hiddenFolders: settings.hiddenFolders,
+      birthDate: settings.birthDate,
     });
 
     const result = db
@@ -6088,6 +6143,7 @@ ipcMain.handle(
       const { sql, params } = buildWhereClause(filters, {
         excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
         hiddenFolders: settings.hiddenFolders,
+        birthDate: settings.birthDate,
       });
       return db
         .prepare(

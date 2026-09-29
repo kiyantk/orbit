@@ -2184,7 +2184,7 @@ const SettingsView = ({
                   src={`${process.env.PUBLIC_URL}/logo-v2-orbit-bright-white-shadow-small.png`}
                   alt="Orbit logo"
                 />
-                <span>Orbit 1.2.0</span>
+                <span>Orbit 1.3.0</span>
               </SettingsRow>
               <SettingsRow>
                 <span>Theme:</span>
