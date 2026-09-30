@@ -814,6 +814,7 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
                     {({ width, height }) => {
                       const cellSize = 108;
                       const columns = Math.max(1, Math.floor(width / cellSize));
+                      const horizontalOffset = (width - columns * cellSize) / 2;
                       const rows = Math.ceil(faceGridFaces.length / columns);
                       return (
                         <Grid
@@ -824,12 +825,14 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
                           rowCount={rows}
                           rowHeight={cellSize}
                           overscanRowCount={2}
+                          style={{ outline: "none", overflowX: "hidden" }}
+                          containerStyle={{ width, maxWidth: width }}
                           cellRenderer={({ columnIndex, rowIndex, key, style }) => {
                             const index = rowIndex * columns + columnIndex;
                             const face = faceGridFaces[index];
                             if (!face) return null;
                             return (
-                              <div key={key} className="people-face-grid-cell" style={style}>
+                              <div key={key} className="people-face-grid-cell" style={{ ...style, left: style.left + horizontalOffset }}>
                                 <FaceGridAvatar
                                   face={face}
                                   label={`Separate face ${index + 1} from ${faceGridPerson.displayName}`}

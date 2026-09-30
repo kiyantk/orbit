@@ -1752,6 +1752,18 @@ select:focus {
   position: relative;
 }
 
+.side-bar-activity-indicator {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-accent-strong);
+  box-shadow: 0 0 0 2px var(--color-app-background);
+  pointer-events: none;
+}
+
 .side-bar-btn .tooltip {
   position: absolute;
   left: 110%;
@@ -3194,7 +3206,7 @@ input[type="checkbox"] {
 .people-face-grid-dialog {
   display: flex;
   flex-direction: column;
-  width: min(760px, 100%);
+  width: min(770px, 100%);
   height: min(720px, 100%);
   max-height: min(720px, 100%);
   overflow: hidden;
@@ -3298,7 +3310,7 @@ input[type="checkbox"] {
   flex: 1;
   min-height: 160px;
   overflow: hidden;
-  padding: 20px;
+  padding: 8px 2px;
   box-sizing: border-box;
 }
 

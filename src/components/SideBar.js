@@ -25,6 +25,54 @@ import {
   faUsers,
 } from "@fortawesome/free-solid-svg-icons";
 
+const isSearchActive = (filters) => {
+  const activeFilters = filters || {};
+  return (
+    Boolean(String(activeFilters.searchTerm || "").trim()) ||
+    Boolean(activeFilters._smartSearch || activeFilters._textSearch)
+  );
+};
+
+const isFilterActive = (filters) => {
+  const activeFilters = filters || {};
+  const searchIsActive = isSearchActive(activeFilters);
+
+  return Object.entries(activeFilters).some(([key, value]) => {
+    if (
+      [
+        "searchBy",
+        "searchTerm",
+        "sortBy",
+        "sortOrder",
+        "tagMatch",
+        "_smartSearch",
+        "_smartScores",
+        "_textSearch",
+        "_textMatches",
+        "_similarTo",
+      ].includes(key)
+    ) {
+      return false;
+    }
+
+    // Search result IDs support a search rather than constituting a separate
+    // filter. IDs supplied by another view still indicate an active filter.
+    if (key === "ids" && searchIsActive) return false;
+
+    if (Array.isArray(value)) return value.length > 0;
+    return value !== null && value !== undefined && value !== "" && value !== false;
+  });
+};
+
+const isSortActive = (filters, defaultSort = "media_id") => {
+  const activeFilters = filters || {};
+  return (
+    activeFilters.sortBy != null &&
+    (activeFilters.sortBy !== defaultSort ||
+      (activeFilters.sortOrder || "desc") !== "desc")
+  );
+};
+
 const SideBar = ({
   activeView,
   activeViewChanged,
@@ -36,7 +84,17 @@ const SideBar = ({
   memoryMode,
   showTagPopup,
   setShowTagPopup,
+  filters,
+  shuffleFilters,
+  mapFilters,
+  settings,
 }) => {
+  const explorerSearchActive = isSearchActive(filters);
+  const explorerFilterActive = isFilterActive(filters);
+  const explorerSortActive = isSortActive(filters, settings?.defaultSort ?? "media_id");
+  const shuffleFilterActive = isFilterActive(shuffleFilters);
+  const mapFilterActive = isFilterActive(mapFilters);
+
   const switchView = (type) => {
     activeViewChanged(type);
   };
@@ -113,6 +171,7 @@ const SideBar = ({
             onClick={() => openActionPanel("sort")}
           >
             <FontAwesomeIcon icon={faSort} />
+            {explorerSortActive && <span className="side-bar-activity-indicator" />}
             <span className="tooltip">Sort</span>
           </button>
           <button
@@ -120,6 +179,7 @@ const SideBar = ({
             onClick={() => openActionPanel("filter")}
           >
             <FontAwesomeIcon icon={faFilter} />
+            {explorerFilterActive && <span className="side-bar-activity-indicator" />}
             <span className="tooltip">Filter</span>
           </button>
           <button
@@ -127,6 +187,7 @@ const SideBar = ({
             onClick={() => openActionPanel("search")}
           >
             <FontAwesomeIcon icon={faMagnifyingGlass} />
+            {explorerSearchActive && <span className="side-bar-activity-indicator" />}
             <span className="tooltip">Search</span>
           </button>
         </div>
@@ -138,6 +199,7 @@ const SideBar = ({
             onClick={() => openActionPanel("shuffle-filter")}
           >
             <FontAwesomeIcon icon={faFilter} />
+            {shuffleFilterActive && <span className="side-bar-activity-indicator" />}
             <span className="tooltip">Filter</span>
           </button>
           <button
@@ -184,6 +246,7 @@ const SideBar = ({
             onClick={() => openActionPanel("map-filter")}
           >
             <FontAwesomeIcon icon={faFilter} />
+            {mapFilterActive && <span className="side-bar-activity-indicator" />}
             <span className="tooltip">Filter</span>
           </button>
         </div>

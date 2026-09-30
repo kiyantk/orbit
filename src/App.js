@@ -462,6 +462,10 @@ const App = () => {
           memoryMode={memoryMode}
           setShowTagPopup={setShowTagPopup}
           showTagPopup={showTagPopup}
+          filters={filters}
+          shuffleFilters={shuffleFilters}
+          mapFilters={mapFilters}
+          settings={settings}
         />
         <div className="content">
           {activeView === "settings" && (

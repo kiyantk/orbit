@@ -1305,8 +1305,17 @@ const fetchTotalCount = useCallback(async (generation) => {
 
       const gridEl = nodeRef.current.querySelector(".explorer-grid");
       const gridBounds = (gridEl ?? nodeRef.current).getBoundingClientRect();
+      const selectionContainer = gridEl?.parentElement ?? nodeRef.current;
+      const selectionContainerBounds = selectionContainer.getBoundingClientRect();
+      // The virtualized inner container is centered when the columns do not
+      // completely fill the grid. Its left offset changes with zoom, so use it
+      // as the x-origin for hit-testing rather than the scroll container.
+      const gridContent = gridEl?.querySelector(
+        ".ReactVirtualized__Grid__innerScrollContainer",
+      );
+      const gridContentBounds = gridContent?.getBoundingClientRect();
 
-      const gridOriginX = gridBounds.left;
+      const gridOriginX = gridContentBounds?.left ?? gridBounds.left;
       const gridOriginY = gridBounds.top;
 
       // Convert the two viewport anchor points to container-relative coords.
@@ -1336,6 +1345,10 @@ const fetchTotalCount = useCallback(async (generation) => {
         top: contentRect.top,
         width: contentRect.right - contentRect.left,
         height: contentRect.bottom - contentRect.top,
+        // The overlay is positioned relative to the grid wrapper, while the
+        // selection rect is relative to the inner virtualized content.
+        offsetX: gridOriginX - selectionContainerBounds.left,
+        offsetY: gridOriginY - selectionContainerBounds.top,
       });
 
       const indices = getIndicesInRect(contentRect);
@@ -1956,17 +1969,17 @@ useEffect(() => {
   // Rendered as a child of the grid outer div (position: absolute in content space).
   const DragSelectOverlay = () => {
     if (!dragContentRect) return null;
-    const { left, top, width, height } = dragContentRect;
+    const { left, top, width, height, offsetX, offsetY } = dragContentRect;
     if (width < 4 && height < 4) return null;
 
     // Shift by -scrollTop so the rect visually tracks its content-space position
-    const visualTop = top - dragScrollTopRef.current;
+    const visualTop = offsetY + top - dragScrollTopRef.current;
 
     return (
       <div
         style={{
           position: "absolute",
-          left,
+          left: offsetX + left,
           top: visualTop,
           width,
           height,
