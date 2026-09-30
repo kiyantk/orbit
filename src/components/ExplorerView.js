@@ -154,6 +154,94 @@ const PersonPickerPopup = ({ selection, busy, onCancel, onSelect }) => {
   );
 };
 
+const PersonInImageAvatar = ({ person, label }) => {
+  const [avatarUrl, setAvatarUrl] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAvatarUrl(null);
+    if (!person.avatarFaceId) return undefined;
+    window.electron.ipcRenderer
+      .invoke("people:ensure-face-avatar", { faceId: person.avatarFaceId })
+      .then((result) => {
+        if (!cancelled && result?.success && result.url) setAvatarUrl(result.url);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [person.avatarFaceId]);
+
+  return (
+    <div className="person-in-image-avatar" aria-label={label}>
+      {avatarUrl ? <img src={avatarUrl} alt="" draggable={false} /> : <span>{label.slice(0, 1).toUpperCase()}</span>}
+    </div>
+  );
+};
+
+const PeopleInImagePopup = ({ selection, onClose }) => {
+  const [showFaceBoxes, setShowFaceBoxes] = useState(false);
+  const people = selection.people ?? [];
+  const faces = selection.faces ?? [];
+
+  return (
+    <Popup
+      title={showFaceBoxes ? "Faces in this image" : "People in this image"}
+      width={620}
+      contentWidth="92%"
+      actions={showFaceBoxes
+        ? [
+          { label: "Back", kind: "secondary", onClick: () => setShowFaceBoxes(false) },
+          { label: "Close", onClick: onClose },
+        ]
+        : [
+          { label: "Close", kind: "secondary", onClick: onClose },
+          ...(faces.length ? [{ label: "View face boxes", onClick: () => setShowFaceBoxes(true) }] : []),
+        ]}
+    >
+      {showFaceBoxes ? (
+        <>
+          <p className="person-picker-description">Face bounding boxes detected in {selection.item.filename}.</p>
+          <div className="person-face-picker person-in-image-face-picker">
+            <img src={`http://localhost:54055/files/${encodeURIComponent(selection.item.path)}`} alt={selection.item.filename} />
+            {faces.map((face, index) => (
+              <div
+                key={face.faceId}
+                className="person-face-picker-box person-in-image-face-box"
+                style={{
+                  left: `${Number(face.boxLeft) * 100}%`,
+                  top: `${Number(face.boxTop) * 100}%`,
+                  width: `${Number(face.boxWidth) * 100}%`,
+                  height: `${Number(face.boxHeight) * 100}%`,
+                }}
+              >
+                <span>{face.personName || `Person ${index + 1}`}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="person-picker-description">
+            {people.length
+              ? `${people.length} ${people.length === 1 ? "person has" : "people have"} a detected face in this image.`
+              : "No associated people were found in this image."}
+          </p>
+          {people.length > 0 && (
+            <div className="person-in-image-list">
+              {people.map((person, index) => (
+                <div className="person-in-image-item" key={person.id}>
+                  <PersonInImageAvatar person={person} label={person.name || `Person ${index + 1}`} />
+                  <strong>{person.name || `Person ${index + 1}`}</strong>
+                  <span>{person.faceCount === 1 ? "1 face" : `${person.faceCount} faces`}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </Popup>
+  );
+};
+
 const Cell = React.memo(
   ({
     columnIndex,
@@ -350,6 +438,7 @@ const ExplorerView = ({
   const [contextMenu, setContextMenu] = useState(null);
   const [facePicker, setFacePicker] = useState(null);
   const [personPicker, setPersonPicker] = useState(null);
+  const [peopleInImage, setPeopleInImage] = useState(null);
   const [faceActionBusy, setFaceActionBusy] = useState(false);
   const [noGutters, setNoGutters] = useState(false);
   const [, forceUpdate] = useState(0);
@@ -656,6 +745,17 @@ const fetchTotalCount = useCallback(async (generation) => {
       enqueueSnackbar("Unable to load faces for this item.", { variant: "error" });
     }
   }, [activePersonId, openPersonPickerForFace, runFaceAction, runFaceActions]);
+
+  const openPeopleInImage = useCallback(async (item) => {
+    setContextMenu(null);
+    try {
+      const result = await window.electron.ipcRenderer.invoke("people:list-people-in-file", { fileId: item.id });
+      if (!result?.success) throw new Error(result?.error || "Unable to load people in this image.");
+      setPeopleInImage({ item, people: result.data?.people ?? [], faces: result.data?.faces ?? [] });
+    } catch (error) {
+      enqueueSnackbar(error.message || "Unable to load people in this image.", { variant: "error" });
+    }
+  }, []);
 
   const selectFaceForPersonAction = useCallback(async (face) => {
     if (!facePicker) return;
@@ -1929,6 +2029,7 @@ useEffect(() => {
           onFindSimilar={onFindSimilar}
           activePersonId={activePersonId}
           onPersonAction={openPersonFacePicker}
+          onPeopleInImage={openPeopleInImage}
           selectedItemIds={contextMenu.itemIds}
         />
       )}
@@ -1960,6 +2061,13 @@ useEffect(() => {
               person.id,
               personPicker.removedItemId,
             )}
+        />
+      )}
+
+      {peopleInImage && (
+        <PeopleInImagePopup
+          selection={peopleInImage}
+          onClose={() => setPeopleInImage(null)}
         />
       )}
 

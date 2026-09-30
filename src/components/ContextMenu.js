@@ -14,6 +14,7 @@ const ContextMenu = ({
   onFindSimilar,
   activePersonId,
   onPersonAction,
+  onPeopleInImage,
   selectedItemIds = [],
 }) => {
   const menuRef = useRef(null);
@@ -23,6 +24,7 @@ const ContextMenu = ({
   const [tags, setTags] = useState([]);
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [hasEmbedding, setHasEmbedding] = useState(false);
+  const [isFaceProcessed, setIsFaceProcessed] = useState(null);
   const [position, setPosition] = useState({ left: x, top: y });
   const [mainMenuHeight, setMainMenuHeight] = useState(0);
   const itemIds = selectedItemIds.length ? selectedItemIds : [item.id];
@@ -84,6 +86,20 @@ const ContextMenu = ({
     window.electron.ipcRenderer
       .invoke("embedding:has-embedding", item.id)
       .then(setHasEmbedding);
+  }, [item.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsFaceProcessed(null);
+    window.electron.ipcRenderer
+      .invoke("people:is-file-processed", { fileId: item.id })
+      .then((result) => {
+        if (!cancelled) setIsFaceProcessed(result?.success && result.processed === true);
+      })
+      .catch(() => {
+        if (!cancelled) setIsFaceProcessed(false);
+      });
+    return () => { cancelled = true; };
   }, [item.id]);
 
   // Load tags when submenu opens
@@ -292,6 +308,14 @@ const ContextMenu = ({
         >
           <div className="context-menu-item" style={{ padding: "6px 12px", opacity: isMultiSelection ? 0.4 : 1, cursor: isMultiSelection ? "default" : "pointer" }} onClick={() => !isMultiSelection && onPersonAction("add-to-person", item, itemIds)}>
             Add to person
+          </div>
+          <div
+            className="context-menu-item"
+            style={{ padding: "6px 12px", opacity: !isMultiSelection && isFaceProcessed ? 1 : 0.4, cursor: !isMultiSelection && isFaceProcessed ? "pointer" : "default" }}
+            title={isFaceProcessed === false ? "Facial recognition has not processed this image yet" : undefined}
+            onClick={() => !isMultiSelection && isFaceProcessed && onPeopleInImage(item)}
+          >
+            In this image
           </div>
           {activePersonId && (
             <>

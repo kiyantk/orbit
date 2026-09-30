@@ -34,6 +34,7 @@ const {
   OCR_METADATA_TABLE,
 } = require("./ocr-schema");
 const {
+  FACE_PIPELINE_VERSION,
   FACE_METADATA_TABLE,
   FACE_SCAN_TABLE,
   FACE_TABLE,
@@ -5160,6 +5161,67 @@ ipcMain.handle("people:list-faces", (_event, { fileId, personId } = {}) => {
   } catch (error) {
     console.error("people:list-faces error:", error);
     return { success: false, error: error.message, data: [] };
+  }
+});
+
+ipcMain.handle("people:is-file-processed", (_event, { fileId } = {}) => {
+  try {
+    initDatabase();
+    const parsedFileId = Number(fileId);
+    if (!Number.isInteger(parsedFileId) || !hasDatabaseTable(FACE_SCAN_TABLE)) {
+      return { success: true, processed: false };
+    }
+    const processed = !!db.prepare(`
+      SELECT 1
+      FROM ${FACE_SCAN_TABLE}
+      WHERE file_id = ? AND pipeline_version = ? AND status = 'completed'
+    `).get(parsedFileId, FACE_PIPELINE_VERSION);
+    return { success: true, processed };
+  } catch (error) {
+    console.error("people:is-file-processed error:", error);
+    return { success: false, error: error.message, processed: false };
+  }
+});
+
+ipcMain.handle("people:list-people-in-file", (_event, { fileId } = {}) => {
+  try {
+    initDatabase();
+    const parsedFileId = Number(fileId);
+    if (!Number.isInteger(parsedFileId) || ![PEOPLE_TABLE, FACE_TABLE, FACE_ASSIGNMENT_TABLE].every(hasDatabaseTable)) {
+      return { success: true, data: { people: [], faces: [] } };
+    }
+    const rows = db.prepare(`
+      SELECT
+        person.id AS personId,
+        person.name AS personName,
+        person.cover_face_id AS coverFaceId,
+        face.id AS faceId,
+        face.box_left AS boxLeft,
+        face.box_top AS boxTop,
+        face.box_width AS boxWidth,
+        face.box_height AS boxHeight
+      FROM ${FACE_TABLE} face
+      JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = face.id
+      JOIN ${PEOPLE_TABLE} person ON person.id = assignment.person_id
+      WHERE face.file_id = ?
+      ORDER BY person.name COLLATE NOCASE ASC, face.recognition_quality DESC, face.id ASC
+    `).all(parsedFileId);
+    const peopleById = new Map();
+    const faces = rows.map((row) => {
+      const person = peopleById.get(row.personId) ?? {
+        id: row.personId,
+        name: row.personName,
+        avatarFaceId: row.coverFaceId ?? row.faceId,
+        faceCount: 0,
+      };
+      person.faceCount += 1;
+      peopleById.set(row.personId, person);
+      return row;
+    });
+    return { success: true, data: { people: [...peopleById.values()], faces } };
+  } catch (error) {
+    console.error("people:list-people-in-file error:", error);
+    return { success: false, error: error.message, data: { people: [], faces: [] } };
   }
 });
 

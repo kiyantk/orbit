@@ -83,6 +83,69 @@
   background: var(--color-overlay);
 }
 
+.person-in-image-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 16px 12px;
+  max-height: 360px;
+  padding: 12px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+}
+
+.person-in-image-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+  text-align: center;
+}
+
+.person-in-image-item strong,
+.person-in-image-item span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.person-in-image-item span {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.person-in-image-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 88px;
+  height: 88px;
+  overflow: hidden;
+  border: 2px solid var(--color-border-subtle);
+  border-radius: 50%;
+  color: var(--color-text-muted);
+  background: var(--color-surface-sunken);
+  font-size: 30px;
+  font-weight: 600;
+}
+
+.person-in-image-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.person-in-image-face-picker {
+  max-height: 65vh;
+  overflow: auto;
+}
+
+.person-in-image-face-box {
+  pointer-events: none;
+}
+
 .person-target-list button,
 .person-target-list span {
   display: block;
