@@ -47,6 +47,7 @@ const {
   FACE_SUGGESTION_TABLE,
   IGNORED_FACE_TABLE,
   HIDDEN_MANUAL_PERSON_TABLE,
+  MANUAL_PERSON_ITEM_TABLE,
 } = require("./facial-recognition-schema");
 const crypto = require("crypto");
 const { parse } = require("csv-parse/sync");
@@ -730,8 +731,12 @@ function hasDatabaseTable(tableName) {
 // the index, and remove automatic People groups that no longer contain faces.
 function removeFacialRecognitionDataForFiles(fileIds) {
   const ids = Array.from(new Set(fileIds.map(Number).filter(Number.isInteger)));
-  if (!ids.length || !hasDatabaseTable(FACE_TABLE)) return;
+  if (!ids.length) return;
   const filePlaceholders = ids.map(() => "?").join(",");
+  if (hasDatabaseTable(MANUAL_PERSON_ITEM_TABLE)) {
+    db.prepare(`DELETE FROM ${MANUAL_PERSON_ITEM_TABLE} WHERE file_id IN (${filePlaceholders})`).run(...ids);
+  }
+  if (!hasDatabaseTable(FACE_TABLE)) return;
   const faceIds = db
     .prepare(`SELECT id FROM ${FACE_TABLE} WHERE file_id IN (${filePlaceholders})`)
     .all(...ids)
@@ -1131,15 +1136,26 @@ function buildWhereClause(rawFilters = {}, options = {}) {
   const facePersonId = Number(filters._facePersonId);
   if (Number.isInteger(facePersonId)) {
     if (hasDatabaseTable(FACE_TABLE) && hasDatabaseTable(FACE_ASSIGNMENT_TABLE)) {
+      const manualPersonItems = hasDatabaseTable(MANUAL_PERSON_ITEM_TABLE) && hasDatabaseTable(MANUAL_PERSON_FACE_TABLE)
+        ? `
+          UNION
+          SELECT DISTINCT item.file_id
+          FROM ${MANUAL_PERSON_ITEM_TABLE} item
+          JOIN ${MANUAL_PERSON_FACE_TABLE} manualFace ON manualFace.manual_person_id = item.manual_person_id
+          JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = manualFace.face_id
+          WHERE assignment.person_id = ?
+        `
+        : "";
       clauses.push(`
         id IN (
           SELECT DISTINCT face.file_id
           FROM ${FACE_TABLE} face
           JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = face.id
           WHERE assignment.person_id = ?
+          ${manualPersonItems}
         )
       `);
-      params.push(facePersonId);
+      params.push(facePersonId, ...(manualPersonItems ? [facePersonId] : []));
     } else {
       clauses.push("1 = 0");
     }
@@ -5312,7 +5328,20 @@ ipcMain.handle("people:list", () => {
     if (!hasDatabaseTable(PEOPLE_TABLE) || !hasDatabaseTable(FACE_TABLE) || !hasDatabaseTable(FACE_ASSIGNMENT_TABLE)) {
       return { success: true, data: [] };
     }
-    const rows = db.prepare(`
+    const hasManualItems = hasDatabaseTable(MANUAL_PERSON_ITEM_TABLE);
+    const manualItemsCte = hasManualItems ? `
+      WITH person_items AS (
+        SELECT assignment.person_id AS personId, face.file_id AS fileId
+        FROM ${FACE_ASSIGNMENT_TABLE} assignment
+        JOIN ${FACE_TABLE} face ON face.id = assignment.face_id
+        UNION
+        SELECT assignment.person_id AS personId, item.file_id AS fileId
+        FROM ${MANUAL_PERSON_ITEM_TABLE} item
+        JOIN ${MANUAL_PERSON_FACE_TABLE} manualFace ON manualFace.manual_person_id = item.manual_person_id
+        JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = manualFace.face_id
+      )
+    ` : "";
+    const rows = db.prepare(`${manualItemsCte}
       SELECT
         p.id,
         p.name,
@@ -5326,13 +5355,14 @@ ipcMain.handle("people:list", () => {
         source.path AS coverPath,
         source.width AS imageWidth,
         source.height AS imageHeight,
-        COUNT(member.id) AS faceCount,
-        COUNT(DISTINCT member.file_id) AS itemCount
+        COUNT(DISTINCT member.id) AS faceCount,
+        ${hasManualItems ? "COUNT(DISTINCT item.fileId)" : "COUNT(DISTINCT member.file_id)"} AS itemCount
       FROM ${PEOPLE_TABLE} p
       JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.person_id = p.id
       JOIN ${FACE_TABLE} member ON member.id = assignment.face_id
       JOIN ${FACE_TABLE} cover ON cover.id = p.cover_face_id
       JOIN files source ON source.id = cover.file_id
+      ${hasManualItems ? "LEFT JOIN person_items item ON item.personId = p.id" : ""}
       GROUP BY p.id
       ORDER BY itemCount DESC, faceCount DESC, p.id ASC
     `).all();
@@ -5343,6 +5373,149 @@ ipcMain.handle("people:list", () => {
   }
 });
 
+ipcMain.handle("people:list-page", async (_event, { offset, limit, query, includeHidden, minimumPhotos } = {}) => {
+  try {
+    if (!resourceManager?.isInstalled("facial-recognition")) return { success: true, data: [], total: 0 };
+    if (!facialRecognitionService) startFacialRecognitionService();
+    const result = await facialRecognitionService?.listPeoplePage({ offset, limit, query, includeHidden, minimumPhotos });
+    return { success: true, data: result?.data ?? [], total: Number(result?.total) || 0 };
+  } catch (error) {
+    console.error("people:list-page error:", error);
+    return { success: false, error: error.message, data: [], total: 0 };
+  }
+});
+
+// The Explorer picker returns a small searchable page, but keeps the same
+// primary ordering as the People view: people with the most distinct media
+// items first. Hidden people are deliberately excluded from assignments.
+ipcMain.handle("people:search", (_event, { query, limit } = {}) => {
+  try {
+    initDatabase();
+    if (![PEOPLE_TABLE, FACE_TABLE, FACE_ASSIGNMENT_TABLE].every(hasDatabaseTable)) {
+      return { success: true, data: [] };
+    }
+    const search = String(query ?? "").trim().slice(0, 128);
+    const resultLimit = Math.max(1, Math.min(100, Number(limit) || 100));
+    const hasManualItems = hasDatabaseTable(MANUAL_PERSON_ITEM_TABLE);
+    const manualItemQuery = hasManualItems ? `
+      UNION
+      SELECT assignment.person_id AS personId, item.file_id AS fileId
+      FROM ${MANUAL_PERSON_ITEM_TABLE} item
+      JOIN ${MANUAL_PERSON_FACE_TABLE} manualFace ON manualFace.manual_person_id = item.manual_person_id
+      JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = manualFace.face_id
+      JOIN filtered_people person ON person.id = assignment.person_id
+    ` : "";
+    const data = db.prepare(`
+      WITH filtered_people AS (
+        SELECT id, name
+        FROM ${PEOPLE_TABLE}
+        WHERE hidden = 0
+          AND (? = '' OR name LIKE ? COLLATE NOCASE OR CAST(id AS TEXT) = ?)
+      ),
+      person_items AS (
+        SELECT assignment.person_id AS personId, face.file_id AS fileId
+        FROM ${FACE_ASSIGNMENT_TABLE} assignment
+        JOIN ${FACE_TABLE} face ON face.id = assignment.face_id
+        JOIN filtered_people person ON person.id = assignment.person_id
+        ${manualItemQuery}
+      ),
+      item_counts AS (
+        SELECT personId, COUNT(DISTINCT fileId) AS itemCount
+        FROM person_items
+        GROUP BY personId
+      )
+      SELECT person.id, person.name, 0 AS hidden, COALESCE(item_counts.itemCount, 0) AS itemCount
+      FROM filtered_people person
+      LEFT JOIN item_counts ON item_counts.personId = person.id
+      ORDER BY itemCount DESC, person.id ASC
+      LIMIT ?
+    `).all(search, `%${search}%`, search, resultLimit);
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:search error:", error);
+    return { success: false, error: error.message, data: [] };
+  }
+});
+
+ipcMain.handle("people:preview-add-items", async (_event, { targetPersonId, fileIds } = {}) => {
+  try {
+    if (!resourceManager?.isInstalled("facial-recognition")) {
+      return { success: false, error: "Download Facial Recognition before changing people." };
+    }
+    if (!facialRecognitionService) startFacialRecognitionService();
+    const data = await facialRecognitionService?.managePersonItems("preview", Number(targetPersonId), fileIds);
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:preview-add-items error:", error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("people:add-items", async (_event, { mode, targetPersonId, fileIds, faceIds } = {}) => {
+  try {
+    if (!resourceManager?.isInstalled("facial-recognition")) {
+      return { success: false, error: "Download Facial Recognition before changing people." };
+    }
+    if (!facialRecognitionService) startFacialRecognitionService();
+    const action = mode === "reviewed" ? "add-reviewed" : "add-without-faces";
+    const data = await facialRecognitionService?.managePersonItems(action, Number(targetPersonId), fileIds, faceIds);
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:add-items error:", error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("people:remove-items", async (_event, { targetPersonId, fileIds } = {}) => {
+  try {
+    if (!resourceManager?.isInstalled("facial-recognition")) {
+      return { success: false, error: "Download Facial Recognition before changing people." };
+    }
+    if (!facialRecognitionService) startFacialRecognitionService();
+    const data = await facialRecognitionService?.managePersonItems(
+      "remove-manual-items",
+      Number(targetPersonId),
+      fileIds,
+    );
+    return { success: true, data };
+  } catch (error) {
+    console.error("people:remove-items error:", error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("people:get-person-file-status", (_event, { personId, fileId } = {}) => {
+  try {
+    initDatabase();
+    const parsedPersonId = Number(personId);
+    const parsedFileId = Number(fileId);
+    if (!Number.isInteger(parsedPersonId) || !Number.isInteger(parsedFileId) || ![FACE_TABLE, FACE_ASSIGNMENT_TABLE].every(hasDatabaseTable)) {
+      return { success: true, data: { hasPersonFace: false, hasManualItem: false } };
+    }
+    const hasPersonFace = !!db.prepare(`
+      SELECT 1
+      FROM ${FACE_TABLE} face
+      JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = face.id
+      WHERE assignment.person_id = ? AND face.file_id = ?
+      LIMIT 1
+    `).get(parsedPersonId, parsedFileId);
+    const hasManualItem = hasDatabaseTable(MANUAL_PERSON_ITEM_TABLE) && hasDatabaseTable(MANUAL_PERSON_FACE_TABLE)
+      ? !!db.prepare(`
+        SELECT 1
+        FROM ${MANUAL_PERSON_ITEM_TABLE} item
+        JOIN ${MANUAL_PERSON_FACE_TABLE} manualFace ON manualFace.manual_person_id = item.manual_person_id
+        JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = manualFace.face_id
+        WHERE assignment.person_id = ? AND item.file_id = ?
+        LIMIT 1
+      `).get(parsedPersonId, parsedFileId)
+      : false;
+    return { success: true, data: { hasPersonFace, hasManualItem } };
+  } catch (error) {
+    console.error("people:get-person-file-status error:", error);
+    return { success: false, error: error.message, data: { hasPersonFace: false, hasManualItem: false } };
+  }
+});
+
 ipcMain.handle("people:list-person-files", (_event, { personId } = {}) => {
   try {
     initDatabase();
@@ -5350,13 +5523,27 @@ ipcMain.handle("people:list-person-files", (_event, { personId } = {}) => {
     if (!Number.isInteger(parsedPersonId) || ![FACE_TABLE, FACE_ASSIGNMENT_TABLE].every(hasDatabaseTable)) {
       return { success: true, data: [] };
     }
-    const data = db.prepare(`
+    const hasManualItems = hasDatabaseTable(MANUAL_PERSON_ITEM_TABLE);
+    const data = db.prepare(hasManualItems ? `
+      SELECT fileId FROM (
+        SELECT DISTINCT face.file_id AS fileId
+        FROM ${FACE_TABLE} face
+        JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = face.id
+        WHERE assignment.person_id = ?
+        UNION
+        SELECT DISTINCT item.file_id AS fileId
+        FROM ${MANUAL_PERSON_ITEM_TABLE} item
+        JOIN ${MANUAL_PERSON_FACE_TABLE} manualFace ON manualFace.manual_person_id = item.manual_person_id
+        JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = manualFace.face_id
+        WHERE assignment.person_id = ?
+      ) ORDER BY fileId ASC
+    ` : `
       SELECT DISTINCT face.file_id AS fileId
       FROM ${FACE_TABLE} face
       JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = face.id
       WHERE assignment.person_id = ?
       ORDER BY face.file_id ASC
-    `).all(parsedPersonId).map((row) => row.fileId);
+    `).all(...(hasManualItems ? [parsedPersonId, parsedPersonId] : [parsedPersonId])).map((row) => row.fileId);
     return { success: true, data };
   } catch (error) {
     console.error("people:list-person-files error:", error);

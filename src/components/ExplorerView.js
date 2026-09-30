@@ -1,6 +1,6 @@
 // ExplorerView.jsx
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { Grid, AutoSizer, InfiniteLoader } from "react-virtualized";
+import { Grid, InfiniteLoader } from "react-virtualized";
 import "./ExplorerView.css";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -89,12 +89,12 @@ function formatTimestamp(timestamp) {
 
 const FacePickerPopup = ({ selection, busy, onCancel, onSelect }) => (
   <Popup
-    title="Select a face"
+    title={selection.action === "set-face" ? "Set face" : "Select a face"}
     width={620}
     contentWidth="92%"
     actions={[{ label: "Cancel", kind: "secondary", onClick: onCancel, disabled: busy }]}
   >
-    <p className="person-picker-description">Choose the face bounding box to update.</p>
+    <p className="person-picker-description">{selection.action === "set-face" ? "Choose the detected face to associate with this person." : "Choose the face bounding box to update."}</p>
     <div className="person-face-picker">
       <img src={`http://localhost:54055/files/${encodeURIComponent(selection.item.path)}`} alt="Choose a face" />
       {selection.faces.map((face, index) => (
@@ -122,10 +122,29 @@ const FacePickerPopup = ({ selection, busy, onCancel, onSelect }) => (
 
 const PersonPickerPopup = ({ selection, busy, onCancel, onSelect }) => {
   const [query, setQuery] = useState("");
-  const matchingPeople = selection.people.filter((person, index) => (
-    person.id !== selection.excludePersonId &&
-    (person.name || `Person ${index + 1}`).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
-  ));
+  const [people, setPeople] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const requestId = useRef(0);
+
+  useEffect(() => {
+    const currentRequestId = ++requestId.current;
+    setLoading(true);
+    const timer = setTimeout(() => {
+      window.electron.ipcRenderer.invoke("people:search", { query, limit: 100 })
+        .then((result) => {
+          if (currentRequestId === requestId.current) setPeople(result?.success ? result.data ?? [] : []);
+        })
+        .catch(() => {
+          if (currentRequestId === requestId.current) setPeople([]);
+        })
+        .finally(() => {
+          if (currentRequestId === requestId.current) setLoading(false);
+        });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const matchingPeople = people.filter((person) => person.id !== selection.excludePersonId);
   return (
     <Popup
       title={selection.title || "Add to person"}
@@ -133,12 +152,12 @@ const PersonPickerPopup = ({ selection, busy, onCancel, onSelect }) => {
       contentWidth="92%"
       actions={[{ label: "Cancel", kind: "secondary", onClick: onCancel, disabled: busy }]}
     >
-      <p className="person-picker-description">Choose the person to add the selected face to.</p>
+      <p className="person-picker-description">{selection.description || "Choose the person to add the selected face to."}</p>
       <input
         className="settings-content-input"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
-        placeholder="Search people..."
+        placeholder="Search people by name..."
         autoFocus
       />
       <div className="person-target-list">
@@ -147,9 +166,113 @@ const PersonPickerPopup = ({ selection, busy, onCancel, onSelect }) => {
             {person.hidden ? "Hidden — " : ""}{person.name || `Person ${index + 1}`}
           </button>
         ))}
-        {!matchingPeople.length && <span>No people match your search.</span>}
-        {busy && <div className="person-picker-busy"><div className="loader" /></div>}
+        {!loading && !query.trim() && matchingPeople.length === 100 && <span>Showing the first 100 people. Search to narrow the list.</span>}
+        {!loading && !matchingPeople.length && <span>No people match your search.</span>}
+        {(busy || loading) && <div className="person-picker-busy"><div className="loader" /></div>}
       </div>
+    </Popup>
+  );
+};
+
+const AddToPersonMethodPopup = ({ selection, busy, onCancel, onAddWithoutFace, onReviewFaces }) => (
+  <Popup
+    title={`Add to ${selection.person.name || "person"}`}
+    width={560}
+    contentWidth="92%"
+    actions={[
+      { label: "Cancel", kind: "secondary", onClick: onCancel, disabled: busy },
+      { label: "Add without a face", onClick: onAddWithoutFace, disabled: busy },
+      { label: "Review detected faces", onClick: onReviewFaces, disabled: busy },
+    ]}
+  >
+    <p className="person-picker-description">
+      Add {selection.itemIds.length === 1 ? "this item" : `${selection.itemIds.length} selected items`} to this person.
+    </p>
+    <p className="person-picker-description">
+      Add without a face keeps the media linked manually. Review detected faces uses this person's existing faces to suggest the most likely box, which you can correct before saving.
+    </p>
+    {busy && <div className="add-person-loading"><div className="loader" /><span>Adding to person...</span></div>}
+  </Popup>
+);
+
+const AddToPersonFaceOption = ({ face, selected, disabled, onToggle }) => {
+  const [avatarUrl, setAvatarUrl] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    setAvatarUrl(null);
+    window.electron.ipcRenderer.invoke("people:ensure-face-avatar", { faceId: face.faceId })
+      .then((result) => {
+        if (!cancelled && result?.success && result.url) setAvatarUrl(result.url);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [face.faceId]);
+  return (
+    <button
+      type="button"
+      className={`add-person-face-option${selected ? " add-person-face-option--selected" : ""}${face.suggested ? " add-person-face-option--suggested" : ""}`}
+      onClick={() => onToggle(face.faceId)}
+      disabled={disabled}
+      title={face.score == null ? "Detected face" : `Match score ${Math.round(face.score * 100)}%`}
+    >
+      {avatarUrl
+        ? <img src={avatarUrl} alt="" draggable={false} />
+        : <img src={`orbit://thumbs/${face.fileId}_thumb.jpg`} alt="" draggable={false} />}
+      <span>{selected ? "Selected" : "Not selected"}</span>
+      {face.suggested && <em>Suggested</em>}
+    </button>
+  );
+};
+
+const AddToPersonReviewPopup = ({ selection, busy, onCancel, onSave }) => {
+  const { faces, noFaceFileIds, alreadyFileIds, hasComparisonData } = selection.preview;
+  const [selectedFaceIds, setSelectedFaceIds] = useState(() => new Set(
+    faces.filter((face) => face.suggested).map((face) => face.faceId),
+  ));
+  const toggleFace = (faceId) => setSelectedFaceIds((current) => {
+    const next = new Set(current);
+    if (next.has(faceId)) {
+      next.delete(faceId);
+      return next;
+    }
+    const selectedFace = faces.find((face) => face.faceId === faceId);
+    // Only one face from an item can represent this person. Choosing another
+    // box is therefore a direct correction of the automatic suggestion.
+    faces.filter((face) => face.fileId === selectedFace?.fileId).forEach((face) => next.delete(face.faceId));
+    next.add(faceId);
+    return next;
+  });
+  return (
+    <Popup
+      title={`Review faces for ${selection.person.name || "person"}`}
+      width={760}
+      maxHeight="88vh"
+      contentWidth="94%"
+      actions={[
+        { label: "Back", kind: "secondary", onClick: onCancel, disabled: busy },
+        { label: `Add ${selectedFaceIds.size + noFaceFileIds.length || "items"}`, onClick: () => onSave([...selectedFaceIds]), disabled: busy },
+      ]}
+    >
+      <p className="person-picker-description">
+        {hasComparisonData
+          ? "Likely matches are preselected. Click a face to correct the selection."
+          : "This person does not have enough face data for suggestions yet. Select any detected faces manually."}
+      </p>
+      {!!alreadyFileIds.length && <p className="person-picker-description">{alreadyFileIds.length} selected {alreadyFileIds.length === 1 ? "item is" : "items are"} already on this person and will be skipped.</p>}
+      {!!noFaceFileIds.length && <p className="person-picker-description">{noFaceFileIds.length} {noFaceFileIds.length === 1 ? "item has" : "items have"} no detected face and will be added without a bounding box.</p>}
+      {faces.length > 0 ? (
+        <div className="add-person-face-grid">
+          {faces.map((face) => (
+            <AddToPersonFaceOption
+              key={face.faceId}
+              face={face}
+              selected={selectedFaceIds.has(face.faceId)}
+              disabled={busy}
+              onToggle={toggleFace}
+            />
+          ))}
+        </div>
+      ) : !noFaceFileIds.length && <p className="person-picker-description">There are no new items to add.</p>}
     </Popup>
   );
 };
@@ -419,6 +542,7 @@ const ExplorerView = ({
   itemToReveal,
   setItemToReveal,
   onPersonItemsRemoved,
+  onPersonItemsAdded,
   activePersonId,
   onActivePersonChange,
 }) => {
@@ -438,6 +562,8 @@ const ExplorerView = ({
   const [contextMenu, setContextMenu] = useState(null);
   const [facePicker, setFacePicker] = useState(null);
   const [personPicker, setPersonPicker] = useState(null);
+  const [addToPersonMethod, setAddToPersonMethod] = useState(null);
+  const [addToPersonReview, setAddToPersonReview] = useState(null);
   const [peopleInImage, setPeopleInImage] = useState(null);
   const [faceActionBusy, setFaceActionBusy] = useState(false);
   const [noGutters, setNoGutters] = useState(false);
@@ -453,6 +579,9 @@ const ExplorerView = ({
   const gridOuterRef = useRef(null);
   const mosaicScrollTopRef = useRef(0);
   const fetchGeneration = useRef(0);
+  const pendingScrollTopRef = useRef(null);
+  const pendingPersistedScrollTopRef = useRef(null);
+  const scrollStateFrameRef = useRef(null);
 
   // ─── Drag-select state ────────────────────────────────────────────────────
   const [dragContentRect, setDragContentRect] = useState(null); // { left, top, width, height } in content coords (drives visual)
@@ -676,21 +805,95 @@ const fetchTotalCount = useCallback(async (generation) => {
     title = "Add to person",
     removedItemId = null,
   ) => {
+    setFacePicker(null);
+    setPersonPicker({ face, excludePersonId, title, removedItemId });
+  }, []);
+
+  const addItemsToPerson = useCallback(async (selection, mode, faceIds = []) => {
     setFaceActionBusy(true);
     try {
-      const peopleResult = await window.electron.ipcRenderer.invoke("people:list");
-      const people = peopleResult?.success ? peopleResult.data ?? [] : [];
-      setFacePicker(null);
-      setPersonPicker({ face, people, excludePersonId, title, removedItemId });
+      const result = await window.electron.ipcRenderer.invoke("people:add-items", {
+        mode,
+        targetPersonId: selection.person.id,
+        fileIds: mode === "reviewed" ? selection.preview.noFaceFileIds : selection.itemIds,
+        faceIds,
+      });
+      if (!result?.success) throw new Error(result?.error || "Unable to add these items to the person.");
+      const added = Number(result.data?.itemsAdded ?? 0) + Number(result.data?.facesAdded ?? 0);
+      const addedFileIds = result.data?.addedFileIds ?? [];
+      if (addedFileIds.length) onPersonItemsAdded?.(selection.person.id, addedFileIds);
+      setAddToPersonMethod(null);
+      setAddToPersonReview(null);
+      enqueueSnackbar(added
+        ? `Added ${added} ${added === 1 ? "item" : "items"} to ${selection.person.name || "person"}.`
+        : "All selected items are already on this person.",
+      { variant: added ? "success" : "info" });
+      refreshExplorerForPeopleAction();
     } catch (error) {
-      enqueueSnackbar("Unable to load people.", { variant: "error" });
+      enqueueSnackbar(error.message || "Unable to add these items to the person.", { variant: "error" });
+    } finally {
+      setFaceActionBusy(false);
+    }
+  }, [onPersonItemsAdded, refreshExplorerForPeopleAction]);
+
+  const reviewItemsForPerson = useCallback(async (selection) => {
+    setFaceActionBusy(true);
+    try {
+      const result = await window.electron.ipcRenderer.invoke("people:preview-add-items", {
+        targetPersonId: selection.person.id,
+        fileIds: selection.itemIds,
+      });
+      if (!result?.success) throw new Error(result?.error || "Unable to review detected faces.");
+      setAddToPersonMethod(null);
+      setAddToPersonReview({ ...selection, preview: result.data });
+    } catch (error) {
+      enqueueSnackbar(error.message || "Unable to review detected faces.", { variant: "error" });
     } finally {
       setFaceActionBusy(false);
     }
   }, []);
 
+  const removeManualItemsFromPerson = useCallback(async (fileIds) => {
+    if (!activePersonId) return;
+    setFaceActionBusy(true);
+    try {
+      const result = await window.electron.ipcRenderer.invoke("people:remove-items", {
+        targetPersonId: activePersonId,
+        fileIds,
+      });
+      if (!result?.success) throw new Error(result?.error || "Unable to remove these items from the person.");
+      const removedFileIds = result.data?.removedFileIds ?? [];
+      if (removedFileIds.length) {
+        removedFileIds.forEach(removePersonItemFromGrid);
+        onPersonItemsRemoved(removedFileIds);
+        await reconcileActivePerson(removedFileIds);
+      }
+      enqueueSnackbar(removedFileIds.length
+        ? `Removed ${removedFileIds.length} ${removedFileIds.length === 1 ? "item" : "items"} from this person.`
+        : "This item is no longer manually associated with this person.",
+      { variant: removedFileIds.length ? "success" : "info" });
+      refreshExplorerForPeopleAction();
+    } catch (error) {
+      enqueueSnackbar(error.message || "Unable to remove these items from the person.", { variant: "error" });
+    } finally {
+      setFaceActionBusy(false);
+    }
+  }, [activePersonId, onPersonItemsRemoved, reconcileActivePerson, refreshExplorerForPeopleAction, removePersonItemFromGrid]);
+
   const openPersonFacePicker = useCallback(async (action, item, selectedIds = [item.id]) => {
     setContextMenu(null);
+    if (action === "add-to-person") {
+      setPersonPicker({
+        itemIds: [...new Set(selectedIds.map(Number).filter(Number.isInteger))],
+        title: "Add to person",
+        description: `Choose the person to add ${selectedIds.length === 1 ? "this item" : `${selectedIds.length} selected items`} to.`,
+      });
+      return;
+    }
+    if (action === "remove-from-person") {
+      await removeManualItemsFromPerson(selectedIds);
+      return;
+    }
     const personId = (action === "separate" || action === "set-avatar" || action === "hide-not-face" || action === "not-same-person") ? activePersonId : null;
     try {
       const results = await Promise.all(selectedIds.map((fileId) =>
@@ -703,26 +906,18 @@ const fetchTotalCount = useCallback(async (generation) => {
       }
       if (selectedIds.length > 1) {
         if (action === "not-same-person") {
-          setFaceActionBusy(true);
-          try {
-            const peopleResult = await window.electron.ipcRenderer.invoke("people:list");
-            const people = peopleResult?.success ? peopleResult.data ?? [] : [];
-            setPersonPicker({
-              targetFaces: faces,
-              people,
-              excludePersonId: activePersonId,
-              title: "Not the same person",
-              removedItemIds: selectedIds,
-            });
-          } finally {
-            setFaceActionBusy(false);
-          }
+          setPersonPicker({
+            targetFaces: faces,
+            excludePersonId: activePersonId,
+            title: "Not the same person",
+            removedItemIds: selectedIds,
+          });
         } else {
           await runFaceActions(action, faces, activePersonId, selectedIds);
         }
         return;
       }
-      if (faces.length === 1 && action !== "add-to-person") {
+      if (faces.length === 1 && action !== "add-to-person" && action !== "set-face") {
         if (action === "not-same-person") {
           await openPersonPickerForFace(
             faces[0],
@@ -744,7 +939,7 @@ const fetchTotalCount = useCallback(async (generation) => {
     } catch (error) {
       enqueueSnackbar("Unable to load faces for this item.", { variant: "error" });
     }
-  }, [activePersonId, openPersonPickerForFace, runFaceAction, runFaceActions]);
+  }, [activePersonId, openPersonPickerForFace, removeManualItemsFromPerson, runFaceAction, runFaceActions]);
 
   const openPeopleInImage = useCallback(async (item) => {
     setContextMenu(null);
@@ -768,6 +963,10 @@ const fetchTotalCount = useCallback(async (generation) => {
       );
       return;
     }
+    if (facePicker.action === "set-face") {
+      await runFaceAction("set-face", face, facePicker.activePersonId);
+      return;
+    }
     const removesOnlyFaceInItem =
       (facePicker.action === "separate" || facePicker.action === "hide-not-face") &&
       facePicker.faces.length === 1;
@@ -778,6 +977,20 @@ const fetchTotalCount = useCallback(async (generation) => {
       removesOnlyFaceInItem ? facePicker.item.id : null,
     );
   }, [facePicker, openPersonPickerForFace, runFaceAction]);
+
+  const selectPersonPickerTarget = useCallback((person) => {
+    if (!personPicker) return;
+    if (personPicker.itemIds) {
+      setPersonPicker(null);
+      setAddToPersonMethod({ person, itemIds: personPicker.itemIds });
+      return;
+    }
+    if (personPicker.targetFaces) {
+      runFaceActions("add-to-person", personPicker.targetFaces, person.id, personPicker.removedItemIds);
+      return;
+    }
+    runFaceAction("add-to-person", personPicker.face, person.id, personPicker.removedItemId);
+  }, [personPicker, runFaceAction, runFaceActions]);
 
   const fetchAllIds = useCallback(async () => {
     const res = await window.electron.ipcRenderer.invoke("fetch-files", {
@@ -997,18 +1210,54 @@ const fetchTotalCount = useCallback(async (generation) => {
     ({ scrollTop, scrollUpdateWasRequested }) => {
       // Keep drag scroll tracker in sync
       dragScrollTopRef.current = scrollTop;
-      setCurrentScrollTop(scrollTop);
+      // react-virtualized can call onScroll from Grid.componentDidUpdate (for
+      // example after TimelineOverlay calls scrollToCell). Updating Explorer or
+      // App state synchronously from that callback can re-enter Grid's update
+      // cycle and eventually hit React's nested-update guard. Coalesce scroll
+      // mirrors into the next frame instead.
+      pendingScrollTopRef.current = scrollTop;
 
-      if (scrollUpdateWasRequested || isRestoringScrollRef.current) return;
-      const topRow = Math.floor(scrollTop / rowHeight);
-      const offsetWithinRow = scrollTop - topRow * rowHeight;
-      scrollAnchorRef.current = {
-        itemIndex: topRow * columnCount,
-        offsetWithinRow,
-      };
-      if (scrollTop !== 0) setScrollPosition(scrollTop);
+      if (!scrollUpdateWasRequested && !isRestoringScrollRef.current) {
+        const topRow = Math.floor(scrollTop / rowHeight);
+        const offsetWithinRow = scrollTop - topRow * rowHeight;
+        scrollAnchorRef.current = {
+          itemIndex: topRow * columnCount,
+          offsetWithinRow,
+        };
+        if (scrollTop !== 0) pendingPersistedScrollTopRef.current = scrollTop;
+      }
+
+      if (scrollStateFrameRef.current !== null) return;
+      scrollStateFrameRef.current = requestAnimationFrame(() => {
+        scrollStateFrameRef.current = null;
+
+        const nextScrollTop = pendingScrollTopRef.current;
+        pendingScrollTopRef.current = null;
+        if (nextScrollTop !== null) {
+          setCurrentScrollTop((previous) =>
+            previous === nextScrollTop ? previous : nextScrollTop,
+          );
+        }
+
+        const persistedScrollTop = pendingPersistedScrollTopRef.current;
+        pendingPersistedScrollTopRef.current = null;
+        if (persistedScrollTop !== null) {
+          setScrollPosition((previous) =>
+            previous === persistedScrollTop ? previous : persistedScrollTop,
+          );
+        }
+      });
     },
     [rowHeight, columnCount, setScrollPosition],
+  );
+
+  useEffect(
+    () => () => {
+      if (scrollStateFrameRef.current !== null) {
+        cancelAnimationFrame(scrollStateFrameRef.current);
+      }
+    },
+    [],
   );
 
   // ─── Drag-select: compute which indices are within a rect ─────────────────
@@ -1560,22 +1809,13 @@ useEffect(() => {
       const tag = document.activeElement?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
-      const isAddMode =
-        explorerMode?.enabled &&
-        ["tag", "memory", "metadata"].includes(explorerMode.type);
-
-      // Ctrl+A: select all / deselect all in add mode
+      // Ctrl+A: select every item in the current Explorer result set.
+      // Explorer modes own their selection state, so leave their shortcuts alone.
       if ((e.key === "a" || e.key === "A") && e.ctrlKey) {
-        if (!isAddMode) return;
+        if (explorerMode?.enabled) return;
         e.preventDefault();
-        if (addModeSelected.size === totalCount) {
-          setAddModeSelected(new Set());
-        } else {
-          const ids = await fetchAllIds();
-          // Merge with the existing selection so Ctrl+A across different
-          // filter states is additive rather than destructive.
-          setAddModeSelected((prev) => new Set([...prev, ...ids]));
-        }
+        const ids = await fetchAllIds();
+        setSelectedItemIds(new Set(ids));
         return;
       }
 
@@ -1625,7 +1865,6 @@ useEffect(() => {
     selectedItem,
     totalCount,
     explorerMode,
-    addModeSelected,
     fetchAllIds,
     onSelect,
     columnCount,
@@ -2048,19 +2287,29 @@ useEffect(() => {
           selection={personPicker}
           busy={faceActionBusy}
           onCancel={() => setPersonPicker(null)}
-          onSelect={(person) => personPicker.targetFaces
-            ? runFaceActions(
-              "add-to-person",
-              personPicker.targetFaces,
-              person.id,
-              personPicker.removedItemIds,
-            )
-            : runFaceAction(
-              "add-to-person",
-              personPicker.face,
-              person.id,
-              personPicker.removedItemId,
-            )}
+          onSelect={selectPersonPickerTarget}
+        />
+      )}
+
+      {addToPersonMethod && (
+        <AddToPersonMethodPopup
+          selection={addToPersonMethod}
+          busy={faceActionBusy}
+          onCancel={() => setAddToPersonMethod(null)}
+          onAddWithoutFace={() => addItemsToPerson(addToPersonMethod, "without-faces")}
+          onReviewFaces={() => reviewItemsForPerson(addToPersonMethod)}
+        />
+      )}
+
+      {addToPersonReview && (
+        <AddToPersonReviewPopup
+          selection={addToPersonReview}
+          busy={faceActionBusy}
+          onCancel={() => {
+            setAddToPersonReview(null);
+            setAddToPersonMethod({ person: addToPersonReview.person, itemIds: addToPersonReview.itemIds });
+          }}
+          onSave={(faceIds) => addItemsToPerson(addToPersonReview, "reviewed", faceIds)}
         />
       )}
 

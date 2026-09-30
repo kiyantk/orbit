@@ -25,6 +25,7 @@ const ContextMenu = ({
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [hasEmbedding, setHasEmbedding] = useState(false);
   const [isFaceProcessed, setIsFaceProcessed] = useState(null);
+  const [personFileStatus, setPersonFileStatus] = useState(null);
   const [position, setPosition] = useState({ left: x, top: y });
   const [mainMenuHeight, setMainMenuHeight] = useState(0);
   const itemIds = selectedItemIds.length ? selectedItemIds : [item.id];
@@ -90,6 +91,19 @@ const ContextMenu = ({
 
   useEffect(() => {
     let cancelled = false;
+    setPersonFileStatus(null);
+    if (!activePersonId || isMultiSelection) return undefined;
+    window.electron.ipcRenderer
+      .invoke("people:get-person-file-status", { personId: activePersonId, fileId: item.id })
+      .then((result) => {
+        if (!cancelled && result?.success) setPersonFileStatus(result.data ?? null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activePersonId, isMultiSelection, item.id]);
+
+  useEffect(() => {
+    let cancelled = false;
     setIsFaceProcessed(null);
     window.electron.ipcRenderer
       .invoke("people:is-file-processed", { fileId: item.id })
@@ -141,6 +155,9 @@ const ContextMenu = ({
     revealFromContextMenu(item);
     onClose();
   };
+  const manualOnlyPersonItem = personFileStatus?.hasManualItem && !personFileStatus?.hasPersonFace;
+  const canSetFace = !!activePersonId && !isMultiSelection && manualOnlyPersonItem && isFaceProcessed === true;
+  const canSetAvatar = !!activePersonId && !isMultiSelection && personFileStatus?.hasPersonFace === true;
 
   return (
     <div
@@ -306,7 +323,7 @@ const ContextMenu = ({
             padding: "6px 0",
           }}
         >
-          <div className="context-menu-item" style={{ padding: "6px 12px", opacity: isMultiSelection ? 0.4 : 1, cursor: isMultiSelection ? "default" : "pointer" }} onClick={() => !isMultiSelection && onPersonAction("add-to-person", item, itemIds)}>
+          <div className="context-menu-item" style={{ padding: "6px 12px" }} onClick={() => onPersonAction("add-to-person", item, itemIds)}>
             Add to person
           </div>
           <div
@@ -322,7 +339,16 @@ const ContextMenu = ({
               <div className="context-menu-item" style={{ padding: "6px 12px" }} onClick={() => onPersonAction("separate", item, itemIds)}>
                 Separate from person
               </div>
-              <div className="context-menu-item" style={{ padding: "6px 12px", opacity: isMultiSelection ? 0.4 : 1, cursor: isMultiSelection ? "default" : "pointer" }} onClick={() => !isMultiSelection && onPersonAction("set-avatar", item, itemIds)}>
+              {manualOnlyPersonItem && isFaceProcessed === true && (
+                <div
+                  className="context-menu-item"
+                  style={{ padding: "6px 12px", opacity: canSetFace ? 1 : 0.4, cursor: canSetFace ? "pointer" : "default" }}
+                  onClick={() => canSetFace && onPersonAction("set-face", item, itemIds)}
+                >
+                  Set face
+                </div>
+              )}
+              <div className="context-menu-item" style={{ padding: "6px 12px", opacity: canSetAvatar ? 1 : 0.4, cursor: canSetAvatar ? "pointer" : "default" }} onClick={() => canSetAvatar && onPersonAction("set-avatar", item, itemIds)}>
                 Set as avatar
               </div>
               <div className="context-menu-item" style={{ padding: "6px 12px" }} onClick={() => onPersonAction("not-same-person", item, itemIds)}>
@@ -330,11 +356,15 @@ const ContextMenu = ({
               </div>
             </>
           )}
-          {activePersonId && (
+          {activePersonId && (manualOnlyPersonItem ? (
+            <div className="context-menu-item" style={{ padding: "6px 12px", color: "var(--color-danger)" }} onClick={() => onPersonAction("remove-from-person", item, itemIds)}>
+              Remove from person
+            </div>
+          ) : (
             <div className="context-menu-item" style={{ padding: "6px 12px", color: "var(--color-danger)" }} onClick={() => onPersonAction("hide-not-face", item, itemIds)}>
               Hide / Not a face
             </div>
-          )}
+          ))}
         </div>
       )}
 

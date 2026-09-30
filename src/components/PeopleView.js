@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Grid } from "react-virtualized";
+import { AutoSizer, Grid } from "react-virtualized";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faArrowsRotate, faEyeSlash, faMagnifyingGlass, faUsers } from "@fortawesome/free-solid-svg-icons";
 import ConfirmPopup from "./ConfirmPopup";
@@ -10,14 +10,7 @@ import "react-virtualized/styles.css";
 const CARD_MIN_WIDTH = 156;
 const CARD_HEIGHT = 210;
 const GRID_GAP = 16;
-const PEOPLE_REFRESH_DELAY_MS = 3000;
-
-function normaliseText(value) {
-  return String(value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase();
-}
+const PEOPLE_PAGE_SIZE = 200;
 
 function columnCountFor(width) {
   return Math.max(1, Math.floor((width + GRID_GAP) / (CARD_MIN_WIDTH + GRID_GAP)));
@@ -133,7 +126,10 @@ function normalizeMinimumPhotos(value) {
 const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
   const [people, setPeople] = useState([]);
   const [query, setQuery] = useState("");
+  const [appliedQuery, setAppliedQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [totalPeople, setTotalPeople] = useState(0);
   const [resource, setResource] = useState(null);
   const [regrouping, setRegrouping] = useState(false);
   const [regroupError, setRegroupError] = useState(null);
@@ -172,49 +168,67 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
   const reviewFaceMaskId = useRef(`people-review-face-mask-${Math.random().toString(36).slice(2)}`).current;
   const [reviewImageLayout, setReviewImageLayout] = useState(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
-  const refreshTimerRef = useRef(null);
-  const loadInFlightRef = useRef(null);
+  const pageLoadingRef = useRef(new Set());
+  const activePageKeyRef = useRef("");
   const peopleCountRef = useRef(null);
+  const minimumPhotos = normalizeMinimumPhotos(currentSettings?.peopleMinPhotos);
+  const includeHiddenPeople = !!currentSettings?.showHiddenPeople;
 
-  const load = useCallback(async ({ includeStatus = false } = {}) => {
-    if (loadInFlightRef.current) return loadInFlightRef.current;
-
-    const request = (async () => {
-      try {
-        const [peopleResult, status] = await Promise.all([
-          window.electron.ipcRenderer.invoke("people:list"),
-          includeStatus ? window.electron.ipcRenderer.invoke("facial-recognition:get-status") : null,
-        ]);
-        if (peopleResult?.success) setPeople(peopleResult.data ?? []);
-        if (status?.resource) setResource(status.resource);
-        if (status?.people != null && Number.isFinite(Number(status.people))) peopleCountRef.current = Number(status.people);
-      } finally {
-        setLoading(false);
-      }
-    })();
-
-    loadInFlightRef.current = request;
+  const loadPage = useCallback(async ({ offset = 0, includeStatus = false } = {}) => {
+    const pageKey = `${appliedQuery}\u0000${includeHiddenPeople}\u0000${minimumPhotos}`;
+    const requestKey = `${pageKey}\u0000${offset}`;
+    if (pageLoadingRef.current.has(requestKey)) return;
+    pageLoadingRef.current.add(requestKey);
+    activePageKeyRef.current = pageKey;
+    if (offset === 0) setLoading(true);
+    else setLoadingMore(true);
     try {
-      await request;
+      const [peopleResult, status] = await Promise.all([
+        window.electron.ipcRenderer.invoke("people:list-page", {
+          offset,
+          limit: PEOPLE_PAGE_SIZE,
+          query: appliedQuery,
+          includeHidden: includeHiddenPeople,
+          minimumPhotos,
+        }),
+        includeStatus ? window.electron.ipcRenderer.invoke("facial-recognition:get-status") : null,
+      ]);
+      if (activePageKeyRef.current !== pageKey) return;
+      if (peopleResult?.success) {
+        const page = peopleResult.data ?? [];
+        setPeople((current) => {
+          if (offset === 0) return page;
+          const knownIds = new Set(current.map((person) => person.id));
+          return [...current, ...page.filter((person) => !knownIds.has(person.id))];
+        });
+        setTotalPeople(Number(peopleResult.total) || 0);
+      }
+      if (status?.resource) setResource(status.resource);
+      if (status?.people != null && Number.isFinite(Number(status.people))) peopleCountRef.current = Number(status.people);
     } finally {
-      if (loadInFlightRef.current === request) loadInFlightRef.current = null;
+      pageLoadingRef.current.delete(requestKey);
+      if (activePageKeyRef.current === pageKey) {
+        if (offset === 0) setLoading(false);
+        else setLoadingMore(false);
+      }
     }
-  }, []);
+  }, [appliedQuery, includeHiddenPeople, minimumPhotos]);
 
-  const scheduleLoad = useCallback(() => {
-    if (refreshTimerRef.current) return;
-    refreshTimerRef.current = window.setTimeout(() => {
-      refreshTimerRef.current = null;
-      void load();
-    }, PEOPLE_REFRESH_DELAY_MS);
-  }, [load]);
+  const load = useCallback((options = {}) => loadPage({ ...options, offset: 0 }), [loadPage]);
+
+  const loadMore = useCallback(() => {
+    if (loading || loadingMore || people.length >= totalPeople) return;
+    void loadPage({ offset: people.length });
+  }, [loadPage, loading, loadingMore, people.length, totalPeople]);
 
   useEffect(() => {
     void load({ includeStatus: true });
-    return () => {
-      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
-    };
   }, [load]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setAppliedQuery(query.trim()), 180);
+    return () => window.clearTimeout(timer);
+  }, [query]);
 
   useEffect(() => {
     const progress = window.electron.ipcRenderer.on("facial-recognition-progress", (next) => {
@@ -222,19 +236,17 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
       const peopleCount = Number(next?.people);
       if (next?.people == null || !Number.isFinite(peopleCount) || peopleCount === peopleCountRef.current) return;
       peopleCountRef.current = peopleCount;
-      scheduleLoad();
     });
     const resources = window.electron.ipcRenderer.on("resource-status", (next) => {
       if (next?.id === "facial-recognition") {
         setResource(next);
-        if (next.state === "ready") scheduleLoad();
       }
     });
     return () => {
       progress?.();
       resources?.();
     };
-  }, [scheduleLoad]);
+  }, []);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -246,13 +258,10 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
 
   const peopleWithLabels = useMemo(() => people.map((person, index) => ({
     ...person,
-    displayName: person.name || `Person ${index + 1}`,
+    displayName: person.name || `Person ${person.id || index + 1}`,
   })), [people]);
 
-  const minimumPhotos = normalizeMinimumPhotos(currentSettings?.peopleMinPhotos);
-  const visiblePeople = useMemo(() => peopleWithLabels.filter((person) => (
-    (currentSettings?.showHiddenPeople || !person.hidden) && Number(person.itemCount) >= minimumPhotos
-  )), [currentSettings?.showHiddenPeople, minimumPhotos, peopleWithLabels]);
+  const visiblePeople = peopleWithLabels;
 
   const similarPerson = useMemo(() => (
     similarPersonId == null ? null : peopleWithLabels.find((person) => person.id === similarPersonId) ?? null
@@ -266,11 +275,7 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
     ));
   }, [currentSettings?.showHiddenPeople, peopleWithLabels, similarPersonId, similarPersonIds, visiblePeople]);
 
-  const filteredPeople = useMemo(() => {
-    const search = normaliseText(query.trim());
-    if (!search) return peopleForCurrentFilter;
-    return peopleForCurrentFilter.filter((person) => normaliseText(person.displayName).includes(search));
-  }, [peopleForCurrentFilter, query]);
+  const filteredPeople = peopleForCurrentFilter;
 
   const suggestedPeople = useMemo(() => {
     if (!suggestion) return null;
@@ -281,8 +286,8 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
   }, [peopleWithLabels, suggestion]);
 
   useEffect(() => {
-    onCountChange?.({ total: visiblePeople.length, filtered: filteredPeople.length });
-  }, [visiblePeople.length, filteredPeople.length, onCountChange]);
+    onCountChange?.({ total: totalPeople, filtered: similarPersonId == null ? totalPeople : filteredPeople.length });
+  }, [filteredPeople.length, onCountChange, similarPersonId, totalPeople]);
 
   const bulkTarget = useMemo(() => peopleWithLabels.find((person) => person.id === bulkTargetId) ?? null, [bulkTargetId, peopleWithLabels]);
 
@@ -763,6 +768,9 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
             cellRenderer={renderCell}
             overscanRowCount={2}
             overscanColumnCount={1}
+            onSectionRendered={({ rowStopIndex }) => {
+              if (similarPersonId == null && rowStopIndex >= rows - 3) loadMore();
+            }}
             style={{ outline: "none", overflowX: "hidden" }}
           />
         )}
@@ -801,16 +809,40 @@ const PeopleView = ({ currentSettings, onViewPerson, onCountChange }) => {
               {!faceGridLoading && faceGridError && <div className="people-regroup-error" role="alert">{faceGridError}</div>}
               {!faceGridLoading && !faceGridError && faceGridFaces.length === 0 && <div className="people-review-message">No faces are currently assigned to this person.</div>}
               {!faceGridLoading && !faceGridError && faceGridFaces.length > 0 && (
-                <div className="person-face-grid">
-                  {faceGridFaces.map((face, index) => (
-                    <FaceGridAvatar
-                      key={face.faceId}
-                      face={face}
-                      label={`Separate face ${index + 1} from ${faceGridPerson.displayName}`}
-                      onSeparate={() => separateFaceFromGrid(face)}
-                      separating={faceGridActionId === face.faceId}
-                    />
-                  ))}
+                <div className="people-face-grid-virtualized">
+                  <AutoSizer>
+                    {({ width, height }) => {
+                      const cellSize = 108;
+                      const columns = Math.max(1, Math.floor(width / cellSize));
+                      const rows = Math.ceil(faceGridFaces.length / columns);
+                      return (
+                        <Grid
+                          width={width}
+                          height={height}
+                          columnCount={columns}
+                          columnWidth={cellSize}
+                          rowCount={rows}
+                          rowHeight={cellSize}
+                          overscanRowCount={2}
+                          cellRenderer={({ columnIndex, rowIndex, key, style }) => {
+                            const index = rowIndex * columns + columnIndex;
+                            const face = faceGridFaces[index];
+                            if (!face) return null;
+                            return (
+                              <div key={key} className="people-face-grid-cell" style={style}>
+                                <FaceGridAvatar
+                                  face={face}
+                                  label={`Separate face ${index + 1} from ${faceGridPerson.displayName}`}
+                                  onSeparate={() => separateFaceFromGrid(face)}
+                                  separating={faceGridActionId === face.faceId}
+                                />
+                              </div>
+                            );
+                          }}
+                        />
+                      );
+                    }}
+                  </AutoSizer>
                 </div>
               )}
             </div>

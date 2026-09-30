@@ -23,6 +23,7 @@ const {
   FACE_SUGGESTION_TABLE,
   IGNORED_FACE_TABLE,
   HIDDEN_MANUAL_PERSON_TABLE,
+  MANUAL_PERSON_ITEM_TABLE,
 } = require("./facial-recognition-schema");
 
 const RECHECK_INTERVAL_MS = 60_000;
@@ -144,13 +145,22 @@ function ensureSchema() {
       manual_person_id INTEGER PRIMARY KEY,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
     );
+    CREATE TABLE IF NOT EXISTS ${MANUAL_PERSON_ITEM_TABLE} (
+      manual_person_id INTEGER NOT NULL,
+      file_id INTEGER NOT NULL,
+      assigned_by TEXT NOT NULL DEFAULT 'manual',
+      assigned_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      PRIMARY KEY (manual_person_id, file_id)
+    );
     CREATE INDEX IF NOT EXISTS idx_face_scans_version ON ${FACE_SCAN_TABLE}(pipeline_version, status);
     CREATE INDEX IF NOT EXISTS idx_faces_file ON ${FACE_TABLE}(file_id);
     CREATE INDEX IF NOT EXISTS idx_faces_embedding_version ON ${FACE_TABLE}(embedding_version);
+    CREATE INDEX IF NOT EXISTS idx_people_name ON ${PEOPLE_TABLE}(name COLLATE NOCASE);
     CREATE INDEX IF NOT EXISTS idx_face_assignments_person ON ${FACE_ASSIGNMENT_TABLE}(person_id);
     CREATE INDEX IF NOT EXISTS idx_person_representatives_person ON ${PERSON_REPRESENTATIVE_TABLE}(person_id);
     CREATE INDEX IF NOT EXISTS idx_manual_person_faces_person ON ${MANUAL_PERSON_FACE_TABLE}(manual_person_id);
     CREATE INDEX IF NOT EXISTS idx_face_suggestions_candidate ON ${FACE_SUGGESTION_TABLE}(candidate_face_id);
+    CREATE INDEX IF NOT EXISTS idx_manual_person_items_file ON ${MANUAL_PERSON_ITEM_TABLE}(file_id);
   `);
 
   const manualPersonColumns = db.prepare(`PRAGMA table_info(${MANUAL_PERSON_TABLE})`).all();
@@ -164,7 +174,7 @@ function ensureSchema() {
   const current = db.prepare(`SELECT value FROM ${FACE_METADATA_TABLE} WHERE key = 'pipeline_version'`).get()?.value;
   if (current !== FACE_PIPELINE_VERSION) {
     db.transaction(() => {
-      db.exec(`DELETE FROM ${FACE_ASSIGNMENT_TABLE}; DELETE FROM ${PERSON_REPRESENTATIVE_TABLE}; DELETE FROM ${FACE_SUGGESTION_TABLE}; DELETE FROM ${IGNORED_FACE_TABLE}; DELETE FROM ${HIDDEN_MANUAL_PERSON_TABLE}; DELETE FROM ${MANUAL_PERSON_FACE_TABLE}; DELETE FROM ${PERSON_EXCLUSION_TABLE}; DELETE FROM ${MANUAL_PERSON_TABLE}; DELETE FROM ${FACE_TABLE}; DELETE FROM ${FACE_SCAN_TABLE}; DELETE FROM ${PEOPLE_TABLE};`);
+      db.exec(`DELETE FROM ${FACE_ASSIGNMENT_TABLE}; DELETE FROM ${PERSON_REPRESENTATIVE_TABLE}; DELETE FROM ${FACE_SUGGESTION_TABLE}; DELETE FROM ${IGNORED_FACE_TABLE}; DELETE FROM ${HIDDEN_MANUAL_PERSON_TABLE}; DELETE FROM ${MANUAL_PERSON_ITEM_TABLE}; DELETE FROM ${MANUAL_PERSON_FACE_TABLE}; DELETE FROM ${PERSON_EXCLUSION_TABLE}; DELETE FROM ${MANUAL_PERSON_TABLE}; DELETE FROM ${FACE_TABLE}; DELETE FROM ${FACE_SCAN_TABLE}; DELETE FROM ${PEOPLE_TABLE};`);
       db.prepare(`
         INSERT INTO ${FACE_METADATA_TABLE}(key, value) VALUES ('pipeline_version', ?)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -363,6 +373,10 @@ function deleteOrphanedPeople() {
     DELETE FROM ${HIDDEN_MANUAL_PERSON_TABLE}
     WHERE NOT EXISTS (SELECT 1 FROM ${MANUAL_PERSON_TABLE} manual WHERE manual.id = manual_person_id)
   `).run();
+  db.prepare(`
+    DELETE FROM ${MANUAL_PERSON_ITEM_TABLE}
+    WHERE NOT EXISTS (SELECT 1 FROM ${MANUAL_PERSON_TABLE} manual WHERE manual.id = manual_person_id)
+  `).run();
 }
 
 function mergeManualPeople(leftId, rightId) {
@@ -385,6 +399,8 @@ function mergeManualPeople(leftId, rightId) {
     db.prepare(`UPDATE ${MANUAL_PERSON_TABLE} SET avatar_face_id = ? WHERE id = ?`).run(secondaryAvatarFaceId, primaryId);
   }
   db.prepare(`UPDATE ${MANUAL_PERSON_FACE_TABLE} SET manual_person_id = ? WHERE manual_person_id = ?`).run(primaryId, secondaryId);
+  db.prepare(`UPDATE OR IGNORE ${MANUAL_PERSON_ITEM_TABLE} SET manual_person_id = ? WHERE manual_person_id = ?`).run(primaryId, secondaryId);
+  db.prepare(`DELETE FROM ${MANUAL_PERSON_ITEM_TABLE} WHERE manual_person_id = ?`).run(secondaryId);
   db.prepare(`DELETE FROM ${PERSON_EXCLUSION_TABLE} WHERE left_manual_person_id = ? OR right_manual_person_id = ?`).run(secondaryId, secondaryId);
   for (const exclusion of exclusions) {
     const otherId = exclusion.left_manual_person_id === secondaryId
@@ -563,10 +579,200 @@ function setManualFace(faceId, manualPersonId) {
   db.prepare(`INSERT INTO ${MANUAL_PERSON_FACE_TABLE}(manual_person_id, face_id) VALUES (?, ?)`).run(manualPersonId, faceId);
 }
 
+function uniqueIntegerIds(values) {
+  return Array.from(new Set((Array.isArray(values) ? values : [])
+    .map(Number)
+    .filter(Number.isInteger)));
+}
+
+function getPersonFileIds(personId) {
+  const direct = db.prepare(`
+    SELECT DISTINCT face.file_id AS fileId
+    FROM ${FACE_ASSIGNMENT_TABLE} assignment
+    JOIN ${FACE_TABLE} face ON face.id = assignment.face_id
+    WHERE assignment.person_id = ?
+  `).all(personId).map((row) => row.fileId);
+  const manual = db.prepare(`
+    SELECT DISTINCT item.file_id AS fileId
+    FROM ${MANUAL_PERSON_ITEM_TABLE} item
+    JOIN ${MANUAL_PERSON_FACE_TABLE} manualFace ON manualFace.manual_person_id = item.manual_person_id
+    JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = manualFace.face_id
+    WHERE assignment.person_id = ?
+  `).all(personId).map((row) => row.fileId);
+  return new Set([...direct, ...manual]);
+}
+
+function previewManualPersonAdd(targetPersonId, fileIds) {
+  const target = db.prepare(`SELECT id FROM ${PEOPLE_TABLE} WHERE id = ?`).get(targetPersonId);
+  if (!target) throw new Error("The selected person is no longer available.");
+  const ids = uniqueIntegerIds(fileIds);
+  if (!ids.length) return { hasComparisonData: false, faces: [], noFaceFileIds: [], alreadyFileIds: [] };
+
+  const existingFileIds = getPersonFileIds(targetPersonId);
+  const targetEmbeddings = db.prepare(`
+    SELECT face.embedding
+    FROM ${FACE_ASSIGNMENT_TABLE} assignment
+    JOIN ${FACE_TABLE} face ON face.id = assignment.face_id
+    WHERE assignment.person_id = ?
+      AND face.embedding IS NOT NULL
+      AND face.embedding_version = ?
+  `).all(targetPersonId, FACE_EMBEDDING_VERSION)
+    .map((row) => float32FromBlob(row.embedding))
+    .filter((embedding) => embedding.length === 512);
+  const comparisonReady = targetEmbeddings.length >= 2;
+  const placeholders = ids.map(() => "?").join(",");
+  const detected = db.prepare(`
+    SELECT
+      face.id AS faceId,
+      face.file_id AS fileId,
+      assignment.person_id AS personId,
+      face.box_left AS boxLeft,
+      face.box_top AS boxTop,
+      face.box_width AS boxWidth,
+      face.box_height AS boxHeight,
+      source.width AS imageWidth,
+      source.height AS imageHeight,
+      face.embedding
+    FROM ${FACE_TABLE} face
+    JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = face.id
+    JOIN files source ON source.id = face.file_id
+    WHERE face.file_id IN (${placeholders})
+    ORDER BY face.file_id ASC, face.recognition_quality DESC, face.id ASC
+  `).all(...ids);
+  const detectedFileIds = new Set(detected.map((face) => face.fileId));
+  const faces = detected
+    .filter((face) => !existingFileIds.has(face.fileId))
+    .map((face) => {
+      const embedding = float32FromBlob(face.embedding);
+      const score = comparisonReady && embedding.length === 512
+        ? Math.max(...targetEmbeddings.map((targetEmbedding) => cosineSimilarity(embedding, targetEmbedding)))
+        : null;
+      return {
+        ...face,
+        embedding: undefined,
+        score,
+        suggested: false,
+      };
+    });
+  const bestByFile = new Map();
+  for (const face of faces) {
+    const current = bestByFile.get(face.fileId);
+    if (!current || (face.score ?? -Infinity) > (current.score ?? -Infinity)) bestByFile.set(face.fileId, face);
+  }
+  // Never preselect a weak lookalike. A user can still click any detected face
+  // in the review grid to correct the choice.
+  for (const face of bestByFile.values()) {
+    face.suggested = comparisonReady && (face.score ?? -Infinity) >= SUGGESTION_MATCH_THRESHOLD;
+  }
+  return {
+    hasComparisonData: comparisonReady,
+    faces,
+    noFaceFileIds: ids.filter((fileId) => !existingFileIds.has(fileId) && !detectedFileIds.has(fileId)),
+    alreadyFileIds: ids.filter((fileId) => existingFileIds.has(fileId)),
+  };
+}
+
+function addItemsToManualPerson(targetPersonId, fileIds, faceIds = []) {
+  const target = db.prepare(`SELECT id FROM ${PEOPLE_TABLE} WHERE id = ?`).get(targetPersonId);
+  if (!target) throw new Error("The selected person is no longer available.");
+  const manualPersonId = ensureManualPerson(targetPersonId);
+  const requestedFileIds = uniqueIntegerIds(fileIds);
+  const requestedFaceIds = uniqueIntegerIds(faceIds);
+
+  return db.transaction(() => {
+    const existingFileIds = getPersonFileIds(targetPersonId);
+    const previousPersonIds = new Set();
+    const addedFileIds = new Set();
+    let facesAdded = 0;
+    for (const faceId of requestedFaceIds) {
+      const face = db.prepare(`
+        SELECT face.id, face.file_id AS fileId, assignment.person_id AS personId
+        FROM ${FACE_TABLE} face
+        JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = face.id
+        WHERE face.id = ?
+      `).get(faceId);
+      if (!face || existingFileIds.has(face.fileId)) continue;
+      if (face.personId !== targetPersonId) {
+        setManualFace(faceId, manualPersonId);
+        db.prepare(`
+          UPDATE ${FACE_ASSIGNMENT_TABLE}
+          SET person_id = ?, assigned_by = 'manual', assigned_at = strftime('%s', 'now')
+          WHERE face_id = ?
+        `).run(targetPersonId, faceId);
+        previousPersonIds.add(face.personId);
+        facesAdded += 1;
+        addedFileIds.add(face.fileId);
+      }
+      existingFileIds.add(face.fileId);
+    }
+
+    const existingFiles = requestedFileIds.length
+      ? new Set(db.prepare(`SELECT id FROM files WHERE id IN (${requestedFileIds.map(() => "?").join(",")})`).all(...requestedFileIds).map((row) => row.id))
+      : new Set();
+    const addManualItem = db.prepare(`
+      INSERT OR IGNORE INTO ${MANUAL_PERSON_ITEM_TABLE}(manual_person_id, file_id, assigned_by)
+      VALUES (?, ?, 'manual')
+    `);
+    let itemsAdded = 0;
+    for (const fileId of requestedFileIds) {
+      if (!existingFiles.has(fileId) || existingFileIds.has(fileId)) continue;
+      if (addManualItem.run(manualPersonId, fileId).changes) {
+        itemsAdded += 1;
+        addedFileIds.add(fileId);
+      }
+    }
+    for (const personId of previousPersonIds) rebuildPersonRepresentatives(personId);
+    if (facesAdded) rebuildPersonRepresentatives(targetPersonId);
+    deleteOrphanedPeople();
+    return {
+      itemsAdded,
+      facesAdded,
+      addedFileIds: [...addedFileIds],
+      skipped: requestedFileIds.length + requestedFaceIds.length - itemsAdded - facesAdded,
+    };
+  })();
+}
+
+function applyManualPersonItemAction(action, targetPersonId, fileIds, faceIds = []) {
+  const parsedTargetId = Number(targetPersonId);
+  if (!Number.isInteger(parsedTargetId)) throw new Error("Choose a person.");
+  if (action === "preview") return previewManualPersonAdd(parsedTargetId, fileIds);
+  if (action === "add-without-faces") return addItemsToManualPerson(parsedTargetId, fileIds);
+  if (action === "add-reviewed") return addItemsToManualPerson(parsedTargetId, fileIds, faceIds);
+  if (action === "remove-manual-items") {
+    const target = db.prepare(`SELECT id FROM ${PEOPLE_TABLE} WHERE id = ?`).get(parsedTargetId);
+    if (!target) throw new Error("The selected person is no longer available.");
+    const ids = uniqueIntegerIds(fileIds);
+    if (!ids.length) return { removedFileIds: [] };
+    const manualPersonIds = db.prepare(`
+      SELECT DISTINCT manualFace.manual_person_id AS manualPersonId
+      FROM ${MANUAL_PERSON_FACE_TABLE} manualFace
+      JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = manualFace.face_id
+      WHERE assignment.person_id = ?
+    `).all(parsedTargetId).map((row) => row.manualPersonId);
+    if (!manualPersonIds.length) return { removedFileIds: [] };
+    const rows = db.prepare(`
+      SELECT file_id AS fileId
+      FROM ${MANUAL_PERSON_ITEM_TABLE}
+      WHERE file_id IN (${ids.map(() => "?").join(",")})
+        AND manual_person_id IN (${manualPersonIds.map(() => "?").join(",")})
+    `).all(...ids, ...manualPersonIds);
+    if (rows.length) {
+      db.prepare(`
+        DELETE FROM ${MANUAL_PERSON_ITEM_TABLE}
+        WHERE file_id IN (${ids.map(() => "?").join(",")})
+          AND manual_person_id IN (${manualPersonIds.map(() => "?").join(",")})
+      `).run(...ids, ...manualPersonIds);
+    }
+    return { removedFileIds: rows.map((row) => row.fileId) };
+  }
+  throw new Error("Unknown manual person item action.");
+}
+
 function applyFaceAction(action, faceId, targetPersonId = null) {
   if (!Number.isInteger(faceId)) throw new Error("Choose a face.");
   const face = db.prepare(`
-    SELECT face.id, assignment.person_id AS personId
+    SELECT face.id, face.file_id AS fileId, assignment.person_id AS personId
     FROM ${FACE_TABLE} face
     JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = face.id
     WHERE face.id = ?
@@ -574,16 +780,22 @@ function applyFaceAction(action, faceId, targetPersonId = null) {
   if (!face) throw new Error("This face is no longer available.");
 
   const result = db.transaction(() => {
-    if (action === "add-to-person") {
+    if (action === "add-to-person" || action === "set-face") {
       const targetId = Number(targetPersonId);
       if (!Number.isInteger(targetId)) throw new Error("Choose a person.");
-      if (targetId === face.personId) throw new Error("This face is already part of that person.");
+      if (action === "add-to-person" && targetId === face.personId) throw new Error("This face is already part of that person.");
       const target = db.prepare(`SELECT id FROM ${PEOPLE_TABLE} WHERE id = ?`).get(targetId);
       if (!target) throw new Error("The selected person is no longer available.");
-      setManualFace(faceId, ensureManualPerson(targetId));
-      db.prepare(`UPDATE ${FACE_ASSIGNMENT_TABLE} SET person_id = ?, assigned_by = 'manual', assigned_at = strftime('%s', 'now') WHERE face_id = ?`).run(targetId, faceId);
-      rebuildPersonRepresentatives(face.personId);
-      rebuildPersonRepresentatives(targetId);
+      const manualPersonId = ensureManualPerson(targetId);
+      if (targetId !== face.personId) {
+        setManualFace(faceId, manualPersonId);
+        db.prepare(`UPDATE ${FACE_ASSIGNMENT_TABLE} SET person_id = ?, assigned_by = 'manual', assigned_at = strftime('%s', 'now') WHERE face_id = ?`).run(targetId, faceId);
+        rebuildPersonRepresentatives(face.personId);
+        rebuildPersonRepresentatives(targetId);
+      }
+      if (action === "set-face") {
+        db.prepare(`DELETE FROM ${MANUAL_PERSON_ITEM_TABLE} WHERE manual_person_id = ? AND file_id = ?`).run(manualPersonId, face.fileId);
+      }
       deleteOrphanedPeople();
       return { action, targetPersonId: targetId, previousPersonId: face.personId };
     }
@@ -852,7 +1064,7 @@ function startChild() {
 function rebuild() {
   clearTimeout(loopTimer);
   db.transaction(() => {
-    db.exec(`DELETE FROM ${FACE_ASSIGNMENT_TABLE}; DELETE FROM ${PERSON_REPRESENTATIVE_TABLE}; DELETE FROM ${FACE_SUGGESTION_TABLE}; DELETE FROM ${IGNORED_FACE_TABLE}; DELETE FROM ${HIDDEN_MANUAL_PERSON_TABLE}; DELETE FROM ${MANUAL_PERSON_FACE_TABLE}; DELETE FROM ${PERSON_EXCLUSION_TABLE}; DELETE FROM ${MANUAL_PERSON_TABLE}; DELETE FROM ${FACE_TABLE}; DELETE FROM ${FACE_SCAN_TABLE}; DELETE FROM ${PEOPLE_TABLE};`);
+    db.exec(`DELETE FROM ${FACE_ASSIGNMENT_TABLE}; DELETE FROM ${PERSON_REPRESENTATIVE_TABLE}; DELETE FROM ${FACE_SUGGESTION_TABLE}; DELETE FROM ${IGNORED_FACE_TABLE}; DELETE FROM ${HIDDEN_MANUAL_PERSON_TABLE}; DELETE FROM ${MANUAL_PERSON_ITEM_TABLE}; DELETE FROM ${MANUAL_PERSON_FACE_TABLE}; DELETE FROM ${PERSON_EXCLUSION_TABLE}; DELETE FROM ${MANUAL_PERSON_TABLE}; DELETE FROM ${FACE_TABLE}; DELETE FROM ${FACE_SCAN_TABLE}; DELETE FROM ${PEOPLE_TABLE};`);
   })();
   hiddenPersonIds.clear();
   loadPersonRepresentatives();
@@ -914,6 +1126,73 @@ function reclusterPeople() {
   return { faces: faces.length, people: peopleCount };
 }
 
+function listPeoplePage(options = {}) {
+  const pageOffset = Math.max(0, Number(options.offset) || 0);
+  const pageLimit = Math.max(1, Math.min(500, Number(options.limit) || 200));
+  const search = String(options.query ?? "").trim().slice(0, 128);
+  const minPhotos = Math.max(1, Math.min(1000, Number(options.minimumPhotos) || 1));
+  const manualItemsCte = `
+      UNION
+      SELECT assignment.person_id AS personId, item.file_id AS fileId
+      FROM ${MANUAL_PERSON_ITEM_TABLE} item
+      JOIN ${MANUAL_PERSON_FACE_TABLE} manualFace ON manualFace.manual_person_id = item.manual_person_id
+      JOIN ${FACE_ASSIGNMENT_TABLE} assignment ON assignment.face_id = manualFace.face_id
+  `;
+  const data = db.prepare(`
+    WITH person_items AS (
+      SELECT assignment.person_id AS personId, face.file_id AS fileId
+      FROM ${FACE_ASSIGNMENT_TABLE} assignment
+      JOIN ${FACE_TABLE} face ON face.id = assignment.face_id
+      ${manualItemsCte}
+    ),
+    person_counts AS (
+      SELECT personId, COUNT(*) AS itemCount
+      FROM person_items
+      GROUP BY personId
+    ),
+    eligible_people AS (
+      SELECT p.id, p.name, p.hidden AS hidden, p.cover_face_id AS coverFaceId, counts.itemCount
+      FROM person_counts counts
+      JOIN ${PEOPLE_TABLE} p ON p.id = counts.personId
+      WHERE counts.itemCount >= ?
+        AND (? = 1 OR p.hidden = 0)
+        AND (? = '' OR p.name LIKE ? COLLATE NOCASE OR CAST(p.id AS TEXT) = ?)
+    ),
+    face_counts AS (
+      SELECT assignment.person_id AS personId, COUNT(*) AS faceCount
+      FROM ${FACE_ASSIGNMENT_TABLE} assignment
+      JOIN eligible_people person ON person.id = assignment.person_id
+      GROUP BY assignment.person_id
+    ),
+    listed_people AS (
+      SELECT
+        person.id,
+        person.name,
+        person.hidden,
+        person.coverFaceId,
+        cover.file_id AS coverFileId,
+        cover.box_left AS boxLeft,
+        cover.box_top AS boxTop,
+        cover.box_width AS boxWidth,
+        cover.box_height AS boxHeight,
+        source.path AS coverPath,
+        source.width AS imageWidth,
+        source.height AS imageHeight,
+        face_counts.faceCount,
+        person.itemCount
+      FROM eligible_people person
+      JOIN face_counts ON face_counts.personId = person.id
+      JOIN ${FACE_TABLE} cover ON cover.id = person.coverFaceId
+      JOIN files source ON source.id = cover.file_id
+    )
+    SELECT listed_people.*, COUNT(*) OVER () AS totalCount
+    FROM listed_people
+    ORDER BY itemCount DESC, faceCount DESC, id ASC
+    LIMIT ? OFFSET ?
+  `).all(minPhotos, options.includeHidden ? 1 : 0, search, `%${search}%`, search, pageLimit, pageOffset);
+  return { data, total: Number(data[0]?.totalCount ?? 0) };
+}
+
 parentPort.on("message", (message) => {
   if (message.type === "start") {
     try {
@@ -971,6 +1250,26 @@ parentPort.on("message", (message) => {
       parentPort.postMessage({ type: "people-face-action-complete", requestId: message.requestId, result });
     } catch (error) {
       parentPort.postMessage({ type: "people-face-action-error", requestId: message.requestId, error: error.message });
+    }
+  } else if (message.type === "people-item-action") {
+    try {
+      const result = applyManualPersonItemAction(
+        message.action,
+        message.targetPersonId,
+        message.fileIds,
+        message.faceIds,
+      );
+      loadPersonRepresentatives();
+      emitProgress();
+      parentPort.postMessage({ type: "people-item-action-complete", requestId: message.requestId, result });
+    } catch (error) {
+      parentPort.postMessage({ type: "people-item-action-error", requestId: message.requestId, error: error.message });
+    }
+  } else if (message.type === "people-list-page") {
+    try {
+      parentPort.postMessage({ type: "people-list-page-complete", requestId: message.requestId, result: listPeoplePage(message.options) });
+    } catch (error) {
+      parentPort.postMessage({ type: "people-list-page-error", requestId: message.requestId, error: error.message });
     }
   } else if (message.type === "stop") {
     stopped = true;

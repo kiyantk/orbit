@@ -254,13 +254,13 @@ export default function TimelineOverlay({
   // ── Fraction → scroll ─────────────────────────────────────────────────────
   const scrollToFraction = useCallback(
     (frac) => {
-      if (!gridRef.current) return;
+      if (!gridRef.current || !Number.isFinite(totalCount) || totalCount <= 0)
+        return;
 
-      const tgt = getSectionAtFrac(frac);
-
-      let index;
-
-      index = Math.floor(frac * totalCount);
+      const index = Math.min(
+        totalCount - 1,
+        Math.max(0, Math.floor(frac * totalCount)),
+      );
 
       gridRef.current.scrollToCell({
         rowIndex: Math.floor(index / columnCount),

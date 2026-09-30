@@ -83,6 +83,68 @@
   background: var(--color-overlay);
 }
 
+.add-person-face-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 12px;
+  max-height: 54vh;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.add-person-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 48px;
+  color: var(--color-text-secondary);
+}
+
+.add-person-face-option {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  padding: 0;
+  border: 2px solid var(--color-border-subtle);
+  border-radius: 8px;
+  color: var(--color-text-on-accent);
+  background: var(--color-surface-sunken);
+  cursor: pointer;
+}
+
+.add-person-face-option:hover,
+.add-person-face-option:focus-visible {
+  border-color: var(--color-focus-ring);
+  outline: 0;
+}
+
+.add-person-face-option--selected {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+
+.add-person-face-option img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.add-person-face-option span,
+.add-person-face-option em {
+  position: absolute;
+  left: 0;
+  padding: 3px 5px;
+  color: var(--color-text-on-accent);
+  background: color-mix(in srgb, var(--color-surface-raised) 80%, transparent);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.add-person-face-option span { bottom: 0; }
+.add-person-face-option em { top: 0; background: var(--color-accent); }
+
 .person-in-image-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));

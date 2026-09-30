@@ -16,6 +16,10 @@ const PERSON_EXCLUSION_TABLE = "manual_person_exclusions";
 const FACE_SUGGESTION_TABLE = "face_match_suggestions";
 const IGNORED_FACE_TABLE = "ignored_person_faces";
 const HIDDEN_MANUAL_PERSON_TABLE = "hidden_manual_people";
+// Media explicitly added to a person when there is no face (or no selected
+// face) to attach. Keep this separate from face assignments so recognition
+// results are never fabricated or overwritten.
+const MANUAL_PERSON_ITEM_TABLE = "manual_person_items";
 
 module.exports = {
   FACE_PIPELINE_VERSION,
@@ -32,4 +36,5 @@ module.exports = {
   FACE_SUGGESTION_TABLE,
   IGNORED_FACE_TABLE,
   HIDDEN_MANUAL_PERSON_TABLE,
+  MANUAL_PERSON_ITEM_TABLE,
 };

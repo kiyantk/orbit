@@ -378,6 +378,16 @@ const App = () => {
     });
   }, [activeExplorerPersonId]);
 
+  const handlePersonItemsAdded = useCallback((personId, itemIds) => {
+    const targetPersonId = Number(personId);
+    const addedIds = new Set((itemIds || []).map(Number).filter(Number.isInteger));
+    if (!addedIds.size || targetPersonId !== activeExplorerPersonId) return;
+    setFilters((current) => {
+      if (!Array.isArray(current?.ids)) return current;
+      return { ...current, ids: [...new Set([...current.ids, ...addedIds])] };
+    });
+  }, [activeExplorerPersonId]);
+
   const handleActivePersonChange = useCallback((personId) => {
     const nextPersonId = Number.isInteger(Number(personId)) ? Number(personId) : null;
     setActiveExplorerPersonId(nextPersonId);
@@ -642,6 +652,7 @@ const App = () => {
                 itemToReveal={itemToReveal}
                 setItemToReveal={setItemToReveal}
                 onPersonItemsRemoved={handlePersonItemsRemoved}
+                onPersonItemsAdded={handlePersonItemsAdded}
                 activePersonId={activeExplorerPersonId}
                 onActivePersonChange={handleActivePersonChange}
               />
