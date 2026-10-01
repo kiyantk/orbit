@@ -1299,6 +1299,29 @@ function buildWhereClause(rawFilters = {}, options = {}) {
   };
 }
 
+function buildSpecialSearchWhereClause(rawFilters = {}, settings = {}) {
+  const filters = { ...(rawFilters ?? {}) };
+  const isRelevanceSearch = filters._smartSearch || filters._textSearch;
+
+  // A new Smart/Text query should use Explorer's ordinary filters, not the
+  // previous search result IDs or any previous text query.
+  delete filters.searchBy;
+  delete filters.searchTerm;
+  delete filters.sortBy;
+  delete filters.sortOrder;
+  delete filters._smartSearch;
+  delete filters._smartScores;
+  delete filters._textSearch;
+  delete filters._textMatches;
+  if (isRelevanceSearch) delete filters.ids;
+
+  return buildWhereClause(filters, {
+    excludeScreenCaptures: !!settings.hideScreenshotsAndScreenRecordings,
+    hiddenFolders: settings.hiddenFolders,
+    birthDate: settings.birthDate,
+  });
+}
+
 // Fetch paginated files for the UI
 // Args: { offset: number, limit: number }
 // Returns: array of rows [{ id, filename, thumbnail_path, path, width, height, file_type }]
@@ -1325,9 +1348,11 @@ ipcMain.handle(
       } else if (
         Array.isArray(filters.ids) &&
         filters.ids.length > 0 &&
-        (filters._smartSearch || filters._textSearch)
+        (filters._smartSearch || filters._textSearch) &&
+        (!filters.sortBy || filters.sortBy === "relevance")
       ) {
-        // Relevance search: preserve rank order supplied by the caller.
+        // With no explicit sort, preserve the relevance rank supplied by the
+        // search. A selected sort always takes precedence.
         // temp_ids.rank was populated in the same order as filters.ids.
         orderSQL = `ORDER BY (SELECT rank FROM temp_ids WHERE temp_ids.id = files.id) ASC`;
       } else {
@@ -1338,15 +1363,16 @@ ipcMain.handle(
           "created",
           "size",
         ];
-        const safeSortBy = validSorts.includes(filters.sortBy)
-          ? filters.sortBy
+        const requestedSortBy = filters.sortBy === "name" ? "filename" : filters.sortBy;
+        const safeSortBy = validSorts.includes(requestedSortBy)
+          ? requestedSortBy
           : settings && settings.defaultSort
             ? settings.defaultSort
             : "media_id";
         const safeSortOrder = filters.sortOrder
           ? filters.sortOrder.toUpperCase()
           : "DESC";
-        if (filters.sortBy === "create_date_local") {
+        if (safeSortBy === "create_date_local") {
           orderSQL = `ORDER BY
           CASE
             WHEN create_date_local IS NOT NULL THEN create_date_local
@@ -4884,7 +4910,7 @@ ipcMain.handle("embedding:resume", () => {
 
 ipcMain.handle(
   "embedding:search",
-  async (event, { query, topK = 200, threshold = 0.2 }) => {
+  async (event, { query, topK = 200, threshold = 0.2, filters = {}, settings = {} }) => {
     if (!embeddingService?._pipelineReady) {
       return { success: false, error: "Model not ready yet", results: [] };
     }
@@ -4899,15 +4925,20 @@ ipcMain.handle(
       const textVec = textRaw.map((v) => v / textNorm);
 
       initDatabase();
+      const { sql: whereSQL, params } = buildSpecialSearchWhereClause(
+        filters,
+        settings,
+      );
       const rows = db
         .prepare(
           `
       SELECT e.file_id, e.embedding
       FROM   embeddings e
       INNER  JOIN files f ON f.id = e.file_id
+      ${whereSQL}
     `,
         )
-        .all();
+        .all(...params);
 
       if (!rows.length) return { success: true, results: [], scores: {} };
 
@@ -5839,7 +5870,7 @@ function differsByAtMostOneCharacter(a, b) {
   return a.slice(left + 1) === b.slice(left);
 }
 
-function findOneCharacterTypoMatches(queryTerms, limit) {
+function findOneCharacterTypoMatches(queryTerms, limit, filterSQL = "", filterParams = []) {
   const typoTerms = [...new Set(queryTerms.filter((term) => term.length >= 4))];
   if (!typoTerms.length) return [];
   // Use anchors from multiple parts of the query. A first-character OCR typo
@@ -5852,8 +5883,9 @@ function findOneCharacterTypoMatches(queryTerms, limit) {
   const where = anchors.map(() => "lower(text) LIKE ?").join(" OR ");
   const candidates = db.prepare(
     "SELECT file_id, text FROM " + OCR_INDEX_TABLE +
-    " WHERE COALESCE(mean_confidence, 0) > 0 AND (" + where + ") LIMIT 1000",
-  ).all(...anchors.map((anchor) => "%" + anchor + "%"));
+    " JOIN files ON files.id = " + OCR_INDEX_TABLE + ".file_id" +
+    " WHERE COALESCE(mean_confidence, 0) > 0 AND (" + where + ")" + filterSQL + " LIMIT 1000",
+  ).all(...anchors.map((anchor) => "%" + anchor + "%"), ...filterParams);
   const matches = [];
   for (const candidate of candidates) {
     const words = textSearchTerms(candidate.text);
@@ -5865,7 +5897,7 @@ function findOneCharacterTypoMatches(queryTerms, limit) {
   return matches;
 }
 
-ipcMain.handle("ocr:search", async (_event, { query, topK = 200 } = {}) => {
+ipcMain.handle("ocr:search", async (_event, { query, topK = 200, filters = {}, settings = {} } = {}) => {
   try {
     initDatabase();
     const ftsQuery = makeFtsQuery(query);
@@ -5876,20 +5908,24 @@ ipcMain.handle("ocr:search", async (_event, { query, topK = 200 } = {}) => {
     if (!ftsAvailable) return { success: true, results: [], matches: {} };
     const limit = Math.max(1, Math.min(5_000, Number(topK) || 200));
     const normalizedQuery = String(query ?? "").normalize("NFKC").trim();
+    const { sql: whereSQL, params } = buildSpecialSearchWhereClause(filters, settings);
+    const filterSQL = whereSQL ? " AND (" + whereSQL.replace(/^WHERE\s+/, "") + ")" : "";
     const searchSql =
       "SELECT file_id, MIN(score) AS score FROM (" +
       "SELECT " + OCR_FTS_TABLE + ".rowid AS file_id, bm25(" + OCR_FTS_TABLE + ") AS score " +
       "FROM " + OCR_FTS_TABLE + " JOIN " + OCR_INDEX_TABLE + " fts_index" +
       " ON fts_index.file_id = " + OCR_FTS_TABLE + ".rowid" +
-      " WHERE " + OCR_FTS_TABLE + " MATCH ? AND COALESCE(fts_index.mean_confidence, 0) > 0 " +
+      " JOIN files ON files.id = fts_index.file_id" +
+      " WHERE " + OCR_FTS_TABLE + " MATCH ? AND COALESCE(fts_index.mean_confidence, 0) > 0" + filterSQL +
       "UNION ALL SELECT file_id, 0 AS score FROM " + OCR_INDEX_TABLE +
-      " WHERE COALESCE(mean_confidence, 0) > 0 AND instr(lower(text), lower(?)) > 0 " +
+      " JOIN files ON files.id = " + OCR_INDEX_TABLE + ".file_id" +
+      " WHERE COALESCE(mean_confidence, 0) > 0 AND instr(lower(text), lower(?)) > 0" + filterSQL +
       ") GROUP BY file_id ORDER BY score ASC, file_id ASC LIMIT ?";
     const rows = db.prepare(searchSql).all(
-      ftsQuery, normalizedQuery, limit,
+      ftsQuery, ...params, normalizedQuery, ...params, limit,
     );
     const existingIds = new Set(rows.map((row) => row.file_id));
-    const typoIds = findOneCharacterTypoMatches(textSearchTerms(normalizedQuery), limit)
+    const typoIds = findOneCharacterTypoMatches(textSearchTerms(normalizedQuery), limit, filterSQL, params)
       .filter((fileId) => !existingIds.has(fileId));
     const results = [
       ...rows.map((row) => row.file_id),

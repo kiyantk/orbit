@@ -36,6 +36,54 @@ function hasActiveExplorerConstraint(activeFilters) {
   });
 }
 
+const SEARCH_FILTER_KEYS = new Set([
+  "searchBy",
+  "searchTerm",
+  "_smartSearch",
+  "_smartScores",
+  "_textSearch",
+  "_textMatches",
+]);
+
+const SORT_FILTER_KEYS = new Set(["sortBy", "sortOrder"]);
+
+function getExplorerFilterState(activeFilters = {}) {
+  activeFilters = activeFilters || {};
+  return Object.fromEntries(
+    Object.entries(activeFilters).filter(
+      ([key]) => !SEARCH_FILTER_KEYS.has(key) && !SORT_FILTER_KEYS.has(key),
+    ),
+  );
+}
+
+function getExplorerSortState(activeFilters = {}) {
+  activeFilters = activeFilters || {};
+  return Object.fromEntries(
+    Object.entries(activeFilters).filter(([key]) => SORT_FILTER_KEYS.has(key)),
+  );
+}
+
+function getExplorerSearchState(activeFilters = {}) {
+  activeFilters = activeFilters || {};
+  const searchState = Object.fromEntries(
+    Object.entries(activeFilters).filter(([key]) => SEARCH_FILTER_KEYS.has(key)),
+  );
+
+  if (activeFilters._smartSearch || activeFilters._textSearch) {
+    searchState.ids = activeFilters.ids;
+  }
+
+  return searchState;
+}
+
+function clearExplorerSearch(activeFilters = {}) {
+  activeFilters = activeFilters || {};
+  const next = { ...activeFilters };
+  SEARCH_FILTER_KEYS.forEach((key) => delete next[key]);
+  if (activeFilters._smartSearch || activeFilters._textSearch) delete next.ids;
+  return next;
+}
+
 const THEME_NAMES = new Set(["cosmic", "midnight", "glacier"]);
 
 function getThemeName(theme) {
@@ -100,49 +148,68 @@ const App = () => {
       // or filter result set.
       if (isEmptySearch && !hasActiveExplorerConstraint(filters)) return;
 
+      if (data._similarTo) {
+        setFilters(data);
+        return;
+      }
+
       if (data.searchBy === "smart") {
         if (data.smartIds?.length > 0) {
-          setFilters({
+          setFilters((current) => ({
+            ...clearExplorerSearch(current),
+            ...(data.sortBy ? { sortBy: data.sortBy, sortOrder: data.sortOrder } : {}),
             ids: data.smartIds,
             _smartSearch: true,
             _smartScores: data.smartScores || {},
             searchBy: "smart",
             searchTerm: data.searchTerm,
-          });
+          }));
         } else if (data.searchTerm) {
           // Search ran but returned zero results — pass an empty ids array so
           // Explorer shows "No results" instead of keeping the previous view.
-          setFilters({
+          setFilters((current) => ({
+            ...clearExplorerSearch(current),
+            ...(data.sortBy ? { sortBy: data.sortBy, sortOrder: data.sortOrder } : {}),
             ids: [-1],
             _smartSearch: true,
             _smartScores: {},
             searchBy: "smart",
             searchTerm: data.searchTerm,
-          });
+          }));
         } else {
-          setFilters({});
+          setFilters((current) => ({
+            ...clearExplorerSearch(current),
+            ...(data.sortBy ? { sortBy: data.sortBy, sortOrder: data.sortOrder } : {}),
+          }));
         }
         return;
       }
       if (data.searchBy === "text") {
         if (data.textIds?.length > 0) {
-          setFilters({
+          setFilters((current) => ({
+            ...clearExplorerSearch(current),
+            ...(data.sortBy ? { sortBy: data.sortBy, sortOrder: data.sortOrder } : {}),
             ids: data.textIds,
             _textSearch: true,
             _textMatches: data.textMatches || {},
             searchBy: "text",
             searchTerm: data.searchTerm,
-          });
+          }));
         } else if (data.searchTerm) {
-          setFilters({
+          setFilters((current) => ({
+            ...clearExplorerSearch(current),
+            ...(data.sortBy ? { sortBy: data.sortBy, sortOrder: data.sortOrder } : {}),
             ids: [-1],
             _textSearch: true,
             _textMatches: {},
             searchBy: "text",
             searchTerm: data.searchTerm,
-          });
+          }));
         } else {
-          setFilters({});
+          setFilters((current) => ({
+            ...clearExplorerSearch(current),
+            ...(data.sortBy ? { sortBy: data.sortBy, sortOrder: data.sortOrder } : {}),
+          }));
         }
         return;
       }
@@ -150,7 +217,28 @@ const App = () => {
       if (actionPanelType === "filter" && !hasActiveExplorerConstraint(data)) {
         setActiveExplorerPersonId(null);
       }
-      setFilters(data);
+      setFilters((current) => {
+        if (actionPanelType === "filter") {
+          return {
+            ...getExplorerFilterState(data),
+            ...getExplorerSortState(current),
+            ...getExplorerSearchState(current),
+          };
+        }
+
+        if (actionPanelType === "sort") {
+          return { ...(current || {}), ...data };
+        }
+
+        // A standard search replaces only the prior search. Filters and the
+        // selected ordering remain in effect.
+        return {
+          ...clearExplorerSearch(current),
+          ...(data.sortBy ? { sortBy: data.sortBy, sortOrder: data.sortOrder } : {}),
+          searchBy: data.searchBy,
+          searchTerm: data.searchTerm,
+        };
+      });
     } else if (actionPanelType === "shuffle-filter") {
       setShuffleFilters(data);
     } else if (actionPanelType === "shuffle-settings") {

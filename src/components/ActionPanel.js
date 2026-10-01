@@ -575,6 +575,7 @@ const ActionPanel = ({
 }) => {
   const [sortBy, setSortBy] = useState(DEFAULT_SORT.sortBy);
   const [sortOrder, setSortOrder] = useState(DEFAULT_SORT.sortOrder);
+  const lastNonRelevanceSortRef = useRef(DEFAULT_SORT);
   const [searchBy, setSearchBy] = useState(DEFAULT_SEARCH.searchBy);
   const [searchTerm, setSearchTerm] = useState(DEFAULT_SEARCH.searchTerm);
   const [prevActionPanelKey, setPrevActionPanelKey] = useState(actionPanelKey);
@@ -625,6 +626,15 @@ const ActionPanel = ({
   const explore = useFilterState(activeFilters || EMPTY_FILTERS);
   const shuffle = useFilterState(activeShuffleFilters || EMPTY_FILTERS);
   const map = useFilterState(activeMapFilters || EMPTY_FILTERS);
+  const relevanceSearchActive = Boolean(
+    activeFilters?._smartSearch || activeFilters?._textSearch,
+  );
+
+  useEffect(() => {
+    if (sortBy !== "relevance") {
+      lastNonRelevanceSortRef.current = { sortBy, sortOrder };
+    }
+  }, [sortBy, sortOrder]);
 
   // ── Fetch options ──────────────────────────────────────────────────────────
 
@@ -673,6 +683,9 @@ const ActionPanel = ({
 
   useEffect(() => {
     if (activeFilters?.ids === undefined) return;
+    // Smart/text result IDs are search state. Keeping them out of the filter
+    // panel prevents a later filter edit from reviving a cleared search.
+    if (activeFilters?._smartSearch || activeFilters?._textSearch) return;
 
     skipNextApplyRef.current = true;
 
@@ -684,7 +697,12 @@ const ActionPanel = ({
     queueMicrotask(() => {
       skipNextApplyRef.current = false;
     });
-  }, [activeFilters?.ids, activeFilters?._similarTo]);
+  }, [
+    activeFilters?.ids,
+    activeFilters?._similarTo,
+    activeFilters?._smartSearch,
+    activeFilters?._textSearch,
+  ]);
 
   // ── Poll embedding status when search panel is open ───────────────────────
 
@@ -766,6 +784,19 @@ const ActionPanel = ({
     setSortBy(settings?.defaultSort ?? "media_id");
     setSortOrder("desc");
   };
+  const activateRelevanceSort = useCallback(() => {
+    if (sortBy !== "relevance") {
+      lastNonRelevanceSortRef.current = { sortBy, sortOrder };
+    }
+    setSortBy("relevance");
+    return { sortBy: "relevance", sortOrder };
+  }, [sortBy, sortOrder]);
+  const restoreNonRelevanceSort = useCallback(() => {
+    const previousSort = lastNonRelevanceSortRef.current;
+    setSortBy(previousSort.sortBy);
+    setSortOrder(previousSort.sortOrder);
+    return previousSort;
+  }, []);
   const resetSearch = () => {
     setSearchBy("name");
     setSearchTerm("");
@@ -791,28 +822,15 @@ const ActionPanel = ({
     }
   };
 
-  // Explore filters also clear sort/search
   const handleExploreDate = (field, value) => {
     explore.handleDateChange(field, value);
-    resetSort();
-    resetSearch();
   };
   const handleExploreYear = (year) => {
     explore.handleYearChange(year);
-    resetSort();
-    resetSearch();
   };
   const handleExploreAge = (age) => {
     explore.handleAgeChange(age);
-    resetSort();
-    resetSearch();
   };
-  const handleExploreFilter = (key, value) => {
-    explore.setFilters((prev) => ({ ...prev, [key]: value }));
-    resetSort();
-    resetSearch();
-  };
-
   const resetExploreAll = () => {
     const filterPanelIsAlreadyClear = !hasActiveExplorerConstraint(
       explore.filters,
@@ -822,11 +840,8 @@ const ActionPanel = ({
     );
 
     explore.resetFilters();
-    resetSort();
-    resetSearch();
-
-    // No filter-state change means the auto-apply effect will not run. Still
-    // clear a previously applied search so the visible grid and panel agree.
+    // No filter-state change means the auto-apply effect will not run. Apply
+    // the empty filter state explicitly; App preserves sort and search.
     if (filterPanelIsAlreadyClear && appliedResultsAreFiltered) {
       onApply(EMPTY_FILTERS);
     }
@@ -837,14 +852,17 @@ const ActionPanel = ({
   const handleSmartSearch = useCallback(
     async (term, threshold = 0.2, topK = 200) => {
       if (!term.trim()) {
+        const restoredSort = restoreNonRelevanceSort();
         onApply({
           searchBy: "smart",
           searchTerm: "",
           smartIds: null,
           smartScores: null,
+          ...restoredSort,
         });
         return;
       }
+      const relevanceSort = activateRelevanceSort();
       setIsSearching(true);
       try {
         const result = await window.electron.ipcRenderer.invoke(
@@ -853,6 +871,8 @@ const ActionPanel = ({
             query: term,
             topK,
             threshold,
+            filters: activeFilters || {},
+            settings: settings || {},
           },
         );
         onApply({
@@ -860,51 +880,75 @@ const ActionPanel = ({
           searchTerm: term,
           smartIds: result.success ? result.results : [],
           smartScores: result.success ? result.scores : {},
+          ...relevanceSort,
         });
       } catch (err) {
         console.error("Smart search error:", err);
       }
       setIsSearching(false);
     },
-    [onApply],
+    [
+      activeFilters,
+      activateRelevanceSort,
+      onApply,
+      restoreNonRelevanceSort,
+      settings,
+    ],
   );
 
   const handleSmartReset = useCallback(() => {
     setSmartSearchTerm("");
     setSmartThreshold(0.2);
     setSmartTopK(200);
+    const restoredSort = restoreNonRelevanceSort();
     onApply({
       searchBy: "smart",
       searchTerm: "",
       smartIds: null,
       smartScores: null,
+      ...restoredSort,
     });
-  }, [onApply]);
+  }, [onApply, restoreNonRelevanceSort]);
 
   const handleTextSearch = useCallback(async (term) => {
     if (!term.trim()) {
-      onApply({ searchBy: "text", searchTerm: "", textIds: null, textMatches: null });
+      const restoredSort = restoreNonRelevanceSort();
+      onApply({ searchBy: "text", searchTerm: "", textIds: null, textMatches: null, ...restoredSort });
       return;
     }
+    const relevanceSort = activateRelevanceSort();
     setIsTextSearching(true);
     try {
-      const result = await window.electron.ipcRenderer.invoke("ocr:search", { query: term, topK: 200 });
+      const result = await window.electron.ipcRenderer.invoke("ocr:search", {
+        query: term,
+        topK: 200,
+        filters: activeFilters || {},
+        settings: settings || {},
+      });
       onApply({
         searchBy: "text", searchTerm: term,
         textIds: result.success ? result.results : [],
         textMatches: result.success ? result.matches : {},
+        ...relevanceSort,
       });
     } catch (error) {
       console.error("Text search error:", error);
     } finally {
       setIsTextSearching(false);
     }
-  }, [onApply]);
+  }, [
+    activeFilters,
+    activateRelevanceSort,
+    onApply,
+    restoreNonRelevanceSort,
+    settings,
+  ]);
 
   const handleTextReset = useCallback(() => {
     setTextSearchTerm("");
-    onApply({ searchBy: "text", searchTerm: "", textIds: null, textMatches: null });
-  }, [onApply]);
+    const restoredSort = restoreNonRelevanceSort();
+    onApply({ searchBy: "text", searchTerm: "", textIds: null, textMatches: null, ...restoredSort });
+  }, [onApply, restoreNonRelevanceSort]);
 
   // ── Reset on panel key change ──────────────────────────────────────────────
 
@@ -931,11 +975,12 @@ const ActionPanel = ({
           <select
             value={sortBy}
             onChange={(e) => {
-              resetSearch();
-              explore.resetFilters();
               setSortBy(e.target.value);
             }}
           >
+            {(relevanceSearchActive || sortBy === "relevance") && (
+              <option value="relevance">Relevance</option>
+            )}
             <option value="media_id">ID</option>
             <option value="name">Name</option>
             <option value="create_date_local">Date Taken</option>
@@ -945,8 +990,6 @@ const ActionPanel = ({
           </select>
           <button
             onClick={() => {
-              resetSearch();
-              explore.resetFilters();
               setSortOrder("asc");
             }}
             className={sortOrder === "asc" ? "active" : ""}
@@ -955,8 +998,6 @@ const ActionPanel = ({
           </button>
           <button
             onClick={() => {
-              resetSearch();
-              explore.resetFilters();
               setSortOrder("desc");
             }}
             className={sortOrder === "desc" ? "active" : ""}
@@ -982,8 +1023,6 @@ const ActionPanel = ({
             handleAgeChange: handleExploreAge,
             setFilters: (updater) => {
               explore.setFilters(updater);
-              resetSort();
-              resetSearch();
             },
           }}
           onReset={resetExploreAll}
@@ -996,15 +1035,25 @@ const ActionPanel = ({
             className="search-panel-type-select"
             value={searchBy}
             onChange={(e) => {
-              explore.resetFilters();
-              resetSort();
-              setSearchBy(e.target.value);
+              const nextSearchBy = e.target.value;
+              const restoredSort = relevanceSearchActive
+                ? restoreNonRelevanceSort()
+                : null;
+              setSearchBy(nextSearchBy);
               setSearchTerm("");
               setSmartSearchTerm("");
               setTextSearchTerm("");
-              // Clear any active relevance search when switching away.
-              if (e.target.value !== "smart" && e.target.value !== "text") {
-                onApply({ searchBy: e.target.value, searchTerm: "" });
+              // Changing search modes clears a current relevance result and
+              // restores the last ordinary sort.
+              if (
+                restoredSort ||
+                (nextSearchBy !== "smart" && nextSearchBy !== "text")
+              ) {
+                onApply({
+                  searchBy: nextSearchBy,
+                  searchTerm: "",
+                  ...(restoredSort || {}),
+                });
               }
             }}
           >
@@ -1021,8 +1070,6 @@ const ActionPanel = ({
                 type="text"
                 value={searchTerm}
                 onChange={(e) => {
-                  explore.resetFilters();
-                  resetSort();
                   setSearchTerm(e.target.value);
                 }}
                 placeholder="Search..."
