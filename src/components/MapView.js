@@ -22,7 +22,6 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
   const lineLayer = useRef(null);
   const countriesLayer = useRef(null);
   const geoJsonCache = useRef(null);
-  const allCoords = useRef([]);
   // Tracks whether the component is still mounted — checked after every await
   const mountedRef = useRef(true);
   const activeLineLayerOnMap = useRef(null);
@@ -138,6 +137,7 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
         res = await window.electron.ipcRenderer.invoke("fetch-map-data", {
           filters,
           settings: currentSettings || {},
+          viewType: mapViewType,
         });
       } catch (err) {
         console.error("[MapView] fetch-map-data failed:", err);
@@ -153,8 +153,8 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
       }
 
       onCountChange?.({
-        total: res.totalCount ?? res.points.length,
-        filtered: res.points.length,
+        total: res.totalCount ?? res.filteredCount,
+        filtered: res.filteredCount ?? 0,
       });
 
       // Guard: map may have been torn down while awaiting
@@ -162,8 +162,30 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
 
       const map = mapRef.current;
 
-      // Build markers
-      const markers = res.points.map((p) => {
+      if (map.hasLayer(clusterLayer.current)) map.removeLayer(clusterLayer.current);
+      clusterLayer.current.clearLayers();
+      if (activeLineLayerOnMap.current) {
+        map.removeLayer(activeLineLayerOnMap.current);
+        activeLineLayerOnMap.current = null;
+      }
+      if (activeHeatLayerOnMap.current) {
+        map.removeLayer(activeHeatLayerOnMap.current);
+        activeHeatLayerOnMap.current = null;
+      }
+      if (countriesLayer.current && map.hasLayer(countriesLayer.current)) {
+        map.removeLayer(countriesLayer.current);
+      }
+      countriesLayer.current = null;
+      heatLayer.current = null;
+      lineLayer.current = null;
+      if (mapViewType !== "countries") {
+        setCountryCounts({});
+        setCountryBounds({});
+        setCountryNameMap({});
+      }
+
+      if (mapViewType === "cluster") {
+      const markers = (res.points || []).map((p) => {
         const marker = L.marker([p.lat, p.lng], {
           icon: L.icon({
             iconUrl: `${process.env.PUBLIC_URL}/marker.png`,
@@ -229,35 +251,39 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
 
       // Cluster layer is already on the map (added during init), so
       // clearLayers / addLayers are always safe here.
-      clusterLayer.current.clearLayers();
-      clusterLayer.current.addLayers(markers);
-
-      allCoords.current = res.points.map((p) => [p.lat, p.lng]);
-
-      heatLayer.current = L.heatLayer(allCoords.current, {
-        radius: 20,
-        blur: 15,
-      });
-
-      lineLayer.current = L.featureGroup(
-        res.lines.map((seg) =>
-          L.polyline(seg, {
+        clusterLayer.current.clearLayers();
+        clusterLayer.current.addLayers(markers);
+        map.addLayer(clusterLayer.current);
+        const bounds = clusterLayer.current.getBounds();
+        if (bounds.isValid()) map.fitBounds(bounds);
+      } else if (mapViewType === "heatmap") {
+        const coordinates = res.coordinates || [];
+        heatLayer.current = L.heatLayer(coordinates, { radius: 20, blur: 15 });
+        map.addLayer(heatLayer.current);
+        activeHeatLayerOnMap.current = heatLayer.current;
+        const bounds = L.latLngBounds(coordinates);
+        if (bounds.isValid()) map.fitBounds(bounds);
+      } else if (mapViewType === "line") {
+        lineLayer.current = L.featureGroup(
+          (res.lines || []).map((segment) => L.polyline(segment, {
             color: getThemeColor("--color-map-route", "#ff5b5b"),
             weight: 2,
-          }),
-        ),
-      );
+          })),
+        );
+        map.addLayer(lineLayer.current);
+        activeLineLayerOnMap.current = lineLayer.current;
+        const bounds = lineLayer.current.getBounds();
+        if (bounds.isValid()) map.fitBounds(bounds);
+      }
 
-      setCountryCounts(res.countryCounts);
-      setCountryBounds(res.countryBounds);
-
-      // Fit to cluster bounds while we still know the layer is on the map
-      const bounds = clusterLayer.current.getBounds();
-      if (bounds.isValid()) map.fitBounds(bounds);
+      if (mapViewType === "countries") {
+      const counts = res.countryCounts || {};
+      setCountryCounts(counts);
+      setCountryBounds(res.countryBounds || {});
 
       // Resolve country names (another async gap — re-check after)
       const entries = await Promise.all(
-        Object.keys(res.countryCounts).map(async (code) => [
+        Object.keys(counts).map(async (code) => [
           code,
           await window.electron.ipcRenderer.invoke("get-country-name", code),
         ]),
@@ -266,6 +292,10 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
       if (cancelled || !mountedRef.current) return;
 
       setCountryNameMap(Object.fromEntries(entries));
+      if (Object.keys(counts).length) await buildCountriesLayer(map, counts);
+      if (cancelled || !mountedRef.current || map !== mapRef.current) return;
+      setCountriesMenuVisible(true);
+      }
       setFirstLoaded(true);
       setLoading(false);
     };
@@ -275,7 +305,7 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
     return () => {
       cancelled = true;
     };
-  }, [mapReady, filters, currentSettings, onCountChange]);
+  }, [mapReady, mapViewType, filters, currentSettings, onCountChange]);
 
   // ─── Load and cache TopoJSON → GeoJSON ───────────────────────────────────
   const loadGeoJson = useCallback(async () => {
@@ -441,35 +471,13 @@ const MapView = ({ mapViewType, filters, currentSettings, onRevealItem, onCountC
     }
 
     setCountriesMenuVisible(false);
-
-    if (mapViewType === "cluster") {
-      // clusterLayer is always safe to add — it was initialised on the map
-      map.addLayer(clusterLayer.current);
-      const bounds = clusterLayer.current.getBounds();
-      if (bounds.isValid()) map.fitBounds(bounds);
-    } else if (mapViewType === "heatmap") {
-      // heatLayer may still be null if data hasn't loaded yet
-      if (heatLayer.current) {
-        map.addLayer(heatLayer.current);
-        activeHeatLayerOnMap.current = heatLayer.current;
-        const bounds = L.latLngBounds(allCoords.current);
-        if (bounds.isValid()) map.fitBounds(bounds);
-      }
-    } else if (mapViewType === "line") {
-      if (lineLayer.current) {
-        map.addLayer(lineLayer.current);
-        activeLineLayerOnMap.current = lineLayer.current;
-        const bounds = lineLayer.current.getBounds();
-        if (bounds.isValid()) map.fitBounds(bounds);
-      }
-    } else if (mapViewType === "countries") {
-      setCountriesMenuVisible(true);
-      // Only build if we have data
-      if (Object.keys(countryCounts).length > 0) {
-        buildCountriesLayer(map, countryCounts);
-      }
+    if (mapViewType !== "countries") {
+      setCountryCounts({});
+      setCountryBounds({});
+      setCountryNameMap({});
+      geoJsonCache.current = null;
     }
-  }, [mapReady, mapViewType, countryCounts, buildCountriesLayer]);
+  }, [mapReady, mapViewType]);
 
   // ─── Country panel click ──────────────────────────────────────────────────
   const handleCountryClick = (countryCode) => {

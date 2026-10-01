@@ -12,6 +12,7 @@ const ShuffleView = ({
 }) => {
   const [images, setImages] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [queueStart, setQueueStart] = useState(0);
   const [loading, setLoading] = useState(true);
   const timerRef = useRef(null);
   const preloadedUrls = useRef(new Set());
@@ -19,6 +20,11 @@ const ShuffleView = ({
   const [prevIndex, setPrevIndex] = useState(null);
   const chronologicalOffset = useRef(0);
   const fetchGenerationRef = useRef(0);
+  const preloadGenerationRef = useRef(null);
+  const currentIndexRef = useRef(0);
+  const queueStartRef = useRef(0);
+  const displayedIndexRef = useRef(0);
+  const prevIndexRef = useRef(null);
 
   function formatDate(timestamp) {
     if (!timestamp) return "";
@@ -99,43 +105,82 @@ const ShuffleView = ({
 
   const preloadImages = useCallback(
     async (generation) => {
-      let newImgs = [];
-      while (newImgs.length < preloadCount) {
-        const fetched = await fetchNext(
-          preloadCount - newImgs.length,
-          generation,
-        );
-        // Empty result could mean stale generation or genuinely no more images
-        if (fetched.length === 0) break;
-        newImgs = [...newImgs, ...fetched];
-      }
+      if (preloadGenerationRef.current === generation) return;
+      preloadGenerationRef.current = generation;
+      try {
+        let newImgs = [];
+        while (newImgs.length < preloadCount) {
+          const fetched = await fetchNext(
+            preloadCount - newImgs.length,
+            generation,
+          );
+          // Empty result could mean stale generation or genuinely no more images
+          if (fetched.length === 0) break;
+          newImgs = [...newImgs, ...fetched];
+        }
 
-      // Don't apply results from a superseded filter set
-      if (generation !== fetchGenerationRef.current) return;
+        // Don't apply results from a superseded filter set
+        if (generation !== fetchGenerationRef.current) return;
 
-      if (newImgs.length > 0) {
-        await preloadImageBytes(newImgs);
-        if (generation !== fetchGenerationRef.current) return; // check again after preload
-        setImages((prev) => [...prev, ...newImgs]);
+        if (newImgs.length > 0) {
+          await preloadImageBytes(newImgs);
+          if (generation !== fetchGenerationRef.current) return; // check again after preload
+
+          // Once a new batch arrives, earlier cards can no longer be reached.
+          // Keep one previous image for the transition plus the active image and
+          // the new preload batch, instead of retaining the entire session.
+          const firstToKeep = Math.max(
+            queueStartRef.current,
+            currentIndexRef.current - 1,
+          );
+          const removeCount = firstToKeep - queueStartRef.current;
+
+          if (removeCount > 0) {
+            queueStartRef.current = firstToKeep;
+            setQueueStart(firstToKeep);
+
+            if (displayedIndexRef.current < firstToKeep) {
+              displayedIndexRef.current = firstToKeep;
+              setDisplayedIndex(firstToKeep);
+            }
+            if (prevIndexRef.current !== null && prevIndexRef.current < firstToKeep) {
+              prevIndexRef.current = null;
+              setPrevIndex(null);
+            }
+          }
+
+          setImages((prev) => {
+            const removed = removeCount > 0 ? prev.slice(0, removeCount) : [];
+            removed.forEach((image) => preloadedUrls.current.delete(image.url));
+            return [...prev.slice(removeCount), ...newImgs];
+          });
+        }
+        setLoading(false);
+      } finally {
+        if (preloadGenerationRef.current === generation) {
+          preloadGenerationRef.current = null;
+        }
       }
-      setLoading(false);
     },
     [fetchNext, preloadCount, preloadImageBytes],
   );
 
   useEffect(() => {
     if (images.length === 0) return;
-    const upcoming = images.slice(currentIndex + 1, currentIndex + 3);
+    const currentOffset = currentIndex - queueStart;
+    const upcoming = images.slice(currentOffset + 1, currentOffset + 3);
     if (upcoming.length > 0) preloadImageBytes(upcoming);
-  }, [currentIndex, images, preloadImageBytes]);
+  }, [currentIndex, images, preloadImageBytes, queueStart]);
 
   const nextImage = useCallback(() => {
     setCurrentIndex((prev) => {
       const next = prev + 1;
-      if (next >= images.length) {
+      if (next >= queueStartRef.current + images.length) {
         preloadImages(fetchGenerationRef.current);
         return prev;
       }
+      currentIndexRef.current = next;
+      prevIndexRef.current = prev;
       setPrevIndex(prev);
       return next;
     });
@@ -146,12 +191,17 @@ const ShuffleView = ({
 
     setImages([]);
     setCurrentIndex(0);
+    setQueueStart(0);
     setLoading(true);
     clearInterval(timerRef.current);
     setDisplayedIndex(0);
     setPrevIndex(null);
     preloadedUrls.current = new Set();
     chronologicalOffset.current = 0;
+    currentIndexRef.current = 0;
+    queueStartRef.current = 0;
+    displayedIndexRef.current = 0;
+    prevIndexRef.current = null;
     preloadImages(generation);
   }, [filters, chronological]);
 
@@ -169,9 +219,9 @@ const ShuffleView = ({
     );
   }
 
-  const current = images[currentIndex];
-  const displayed = images[displayedIndex];
-  if (!current) return null;
+  const current = images[currentIndex - queueStart];
+  const displayed = images[displayedIndex - queueStart];
+  if (!current || !displayed) return null;
 
   const getHeicClass = (img) =>
     currentSettings?.adjustHeicColors && img?.extension === ".heic"
@@ -187,6 +237,7 @@ const ShuffleView = ({
         style={{ display: "none" }}
         onLoad={() => {
           if (smoothTransition) setPrevIndex((p) => p); // no-op, prev already set in nextImage
+          displayedIndexRef.current = currentIndex;
           setDisplayedIndex(currentIndex);
         }}
       />
@@ -194,17 +245,17 @@ const ShuffleView = ({
       <div className="shuffle-image-container">
         {smoothTransition && prevIndex !== null && (
           <img
-            key={`prev-${images[prevIndex]?.url}`}
-            src={images[prevIndex]?.url}
+            key={`prev-${images[prevIndex - queueStart]?.url}`}
+            src={images[prevIndex - queueStart]?.url}
             alt=""
-            className={`shuffle-image shuffle-image-prev ${getHeicClass(images[prevIndex])}`}
+            className={`shuffle-image shuffle-image-prev ${getHeicClass(images[prevIndex - queueStart])}`}
           />
         )}
         <img
-          key={images[displayedIndex]?.url}
-          src={images[displayedIndex]?.url}
-          alt={images[displayedIndex]?.filename}
-          className={`shuffle-image${smoothTransition ? " shuffle-image-next" : ""} ${getHeicClass(images[displayedIndex])}`}
+          key={displayed?.url}
+          src={displayed?.url}
+          alt={displayed?.filename}
+          className={`shuffle-image${smoothTransition ? " shuffle-image-next" : ""} ${getHeicClass(displayed)}`}
         />
       </div>
 

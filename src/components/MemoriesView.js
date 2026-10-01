@@ -411,6 +411,30 @@ const MemoriesView = ({
     setLoading(false);
   };
 
+  const openCustomMemory = useCallback(async (memory) => {
+    if (memoryMode !== "edit") {
+      if (memory.total > 0) onViewMemory(memory.selection);
+      return;
+    }
+
+    const result = await window.electron.ipcRenderer.invoke("memory:get-details", {
+      id: memory.id,
+    });
+    if (!result?.success) {
+      console.error("Failed to load memory details:", result?.error);
+      return;
+    }
+    const details = result.memory;
+    setNewMemory({
+      id: details.id,
+      title: details.title,
+      description: details.description,
+      color: details.color,
+      existing: details.mediaIds,
+    });
+    setShowAddMemory(true);
+  }, [memoryMode, onViewMemory]);
+
   // --- DRAG: whole card is the handle ---
   const handleCardMouseDown = useCallback((e, index) => {
     if (e.button !== 0) return;
@@ -510,7 +534,7 @@ const MemoriesView = ({
       renderItem={(y, _index, key, style) => (
         <MemoryBox key={key} memoryLayout={memoryLayout} title={y.year}
           className="memory-box" style={{ ...style, ...getMemoryBoxStyle(y.thumbnails) }}
-          onClick={() => onViewMemory(y.ids)}>
+          onClick={() => onViewMemory(y.selection)}>
           <div className="memory-text">
             <div className="title">{y.year}</div>
             <div className="description">All media from {y.year}</div>
@@ -533,7 +557,7 @@ const MemoriesView = ({
         return (
           <MemoryBox key={key} memoryLayout={memoryLayout} title={label}
             className="memory-box" style={{ ...style, ...getMemoryBoxStyle(m.thumbnails) }}
-            onClick={() => onViewMemory(m.ids)}>
+            onClick={() => onViewMemory(m.selection)}>
             <div className="memory-text">
               <div className="title">{label}</div>
               <div className="description">All media from {label}</div>
@@ -551,7 +575,7 @@ const MemoriesView = ({
       renderItem={(t, _index, key, style) => (
         <MemoryBox key={key} memoryLayout={memoryLayout} title={t.title}
           className="memory-box" style={{ ...style, ...getMemoryBoxStyle(t.thumbnails) }}
-          onClick={() => onViewMemory(t.ids)}>
+          onClick={() => onViewMemory(t.selection)}>
           <div className="memory-text">
             <div className="title">{t.title}</div>
             <div className="description">
@@ -571,7 +595,7 @@ const MemoriesView = ({
       renderItem={(t, _index, key, style) => (
         <MemoryBox key={key} memoryLayout={memoryLayout} title={t.title}
           className="memory-box" style={{ ...style, ...getMemoryBoxStyle(t.thumbnails) }}
-          onClick={() => onViewMemory(t.ids)}>
+          onClick={() => onViewMemory(t.selection)}>
           <div className="memory-text">
             <div className="title">{t.title}</div>
             <div className="description">
@@ -614,22 +638,7 @@ const MemoriesView = ({
             }}
             onMouseDown={(e) => handleCardMouseDown(e, index)}
             onClick={() => {
-              if (drag.current.active) return;
-              const mediaIds = JSON.parse(m.media_ids || "[]");
-              if (memoryMode !== "edit" && mediaIds.length > 0) {
-                onViewMemory(mediaIds);
-                return;
-              } else if (memoryMode !== "edit") {
-                return;
-              }
-              setNewMemory({
-                id: m.id,
-                title: m.title,
-                description: m.description,
-                color: m.color,
-                existing: mediaIds,
-              });
-              setShowAddMemory(true);
+              if (!drag.current.active) openCustomMemory(m);
             }}
           >
             <div
@@ -677,7 +686,7 @@ const MemoriesView = ({
               title={entry.year}
               className="memory-box"
               style={{ ...style, ...getMemoryBoxStyle(entry.thumbnails) }}
-              onClick={() => onViewMemory(entry.ids)}
+              onClick={() => onViewMemory(entry.selection)}
             >
               <div className="memory-text">
                 <div className="title">{entry.year}</div>
@@ -730,21 +739,7 @@ const MemoriesView = ({
                 key={`custom-${m.id}`}
                 className="memory-box"
                 style={getMemoryBoxStyle(m.thumbnails)}
-                onClick={() => {
-                  const mediaIds = JSON.parse(m.media_ids || "[]");
-                  if (memoryMode !== "edit" && mediaIds.length > 0) {
-                    onViewMemory(mediaIds);
-                    return;
-                  } else if (memoryMode !== "edit") return;
-                  setNewMemory({
-                    id: m.id,
-                    title: m.title,
-                    description: m.description,
-                    color: m.color,
-                    existing: mediaIds,
-                  });
-                  setShowAddMemory(true);
-                }}
+                onClick={() => openCustomMemory(m)}
               >
                 <div
                   className="memory-color"
@@ -766,7 +761,7 @@ const MemoriesView = ({
                 key={`year-${y.year}`}
                 className="memory-box"
                 style={getMemoryBoxStyle(y.thumbnails)}
-                onClick={() => onViewMemory(y.ids)}
+                onClick={() => onViewMemory(y.selection)}
               >
                 <div className="memory-text">
                   <div className="title">{y.year}</div>
@@ -789,7 +784,7 @@ const MemoriesView = ({
                 key={`month-${m.year}-${m.month}`}
                 className="memory-box"
                 style={getMemoryBoxStyle(m.thumbnails)}
-                onClick={() => onViewMemory(m.ids)}
+                onClick={() => onViewMemory(m.selection)}
               >
                 <div className="memory-text">
                   <div className="title">{label}</div>
@@ -807,7 +802,7 @@ const MemoriesView = ({
                 key={`trip-${t.id}`}
                 className="memory-box"
                 style={getMemoryBoxStyle(t.thumbnails)}
-                onClick={() => onViewMemory(t.ids)}
+                onClick={() => onViewMemory(t.selection)}
               >
                 <div className="memory-text">
                   <div className="title">{t.title}</div>
@@ -851,12 +846,8 @@ const MemoriesView = ({
                 ? <>{data.start.slice(0, 10)} <FontAwesomeIcon icon={faArrowRight} /> {data.end.slice(0, 10)}</>
                 : data.description;
           const openItem = () => {
-            if (!isCustom) return onViewMemory(data.ids);
-            const mediaIds = JSON.parse(data.media_ids || "[]");
-            if (memoryMode !== "edit" && mediaIds.length > 0) return onViewMemory(mediaIds);
-            if (memoryMode !== "edit") return;
-            setNewMemory({ id: data.id, title: data.title, description: data.description, color: data.color, existing: mediaIds });
-            setShowAddMemory(true);
+            if (!isCustom) return onViewMemory(data.selection);
+            return openCustomMemory(data);
           };
 
           return (
@@ -956,7 +947,7 @@ const MemoriesView = ({
       {/* --- ADD MEMORY POPUP --- */}
       {showAddMemory && (
         <Popup
-          title="Add New Memory"
+          title={memoryMode === "edit" ? "Edit Memory" : "Add New Memory"}
           actions={[
             {
               label: "Cancel",

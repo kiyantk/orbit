@@ -151,7 +151,11 @@ function mergeAdjacentPlaceItems(items, chronological) {
     }
 
     previous.count += item.count;
-    previous.ids = [...previous.ids, ...item.ids];
+    previous.selections = [
+      ...(previous.selections || (previous.selection ? [previous.selection] : [])),
+      ...(item.selections || (item.selection ? [item.selection] : [])),
+    ];
+    delete previous.selection;
     previous.lastVisit = Math.max(previous.lastVisit || 0, item.lastVisit || 0);
     if (item.thumbnails?.length) previous.thumbnails = item.thumbnails;
     return merged;
@@ -408,7 +412,8 @@ const PlacesView = ({ currentSettings, onViewPlace, onCountChange }) => {
 
   const handleCardClick = useCallback(
     (item) => {
-      if (item.ids?.length) onViewPlace(item.ids);
+      const selections = item.selections || (item.selection ? [item.selection] : []);
+      if (selections.length) onViewPlace(selections);
     },
     [onViewPlace],
   );

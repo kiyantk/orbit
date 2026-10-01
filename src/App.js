@@ -556,13 +556,15 @@ const App = () => {
               switchMemoryMode={setMemoryMode}
               memoryMode={memoryMode}
               memoryLayout={settings.memoriesLayout}
-              onViewMemory={(ids) => {
-                if (!settings) {
-                  setFilters({ ids });
-                  setExplorerScroll(0);
-                  setActiveView("explore");
-                }
-                switch (settings.openMemoriesIn) {
+              onViewMemory={async (selection) => {
+                const result = await window.electron.ipcRenderer.invoke(
+                  "resolve-summary-media-ids",
+                  { selections: selection },
+                );
+                const ids = result?.success ? result.ids : [];
+                if (!ids.length) return;
+
+                switch (settings?.openMemoriesIn) {
                   case "explorer":
                     setFilters({ ids });
                     setExplorerScroll(0);
@@ -598,7 +600,13 @@ const App = () => {
           {activeView === "places" && (
             <PlacesView
               currentSettings={settings}
-              onViewPlace={(ids) => {
+              onViewPlace={async (selections) => {
+                const result = await window.electron.ipcRenderer.invoke(
+                  "resolve-summary-media-ids",
+                  { selections },
+                );
+                const ids = result?.success ? result.ids : [];
+                if (!ids.length) return;
                 setFilters({ ids });
                 setExplorerScroll(0);
                 setActiveView("explore");

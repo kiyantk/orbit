@@ -65,12 +65,18 @@ async function initPipelines(dir) {
   }
 }
 
-async function embedImage(fileId, filePath, imageBufferB64) {
+async function embedImage(fileId, filePath, imageBuffer) {
   let tempPath = null;
   try {
     let inputPath;
-    if (imageBufferB64) {
-      const buf = Buffer.from(imageBufferB64, "base64");
+    if (imageBuffer) {
+      const buf = Buffer.isBuffer(imageBuffer)
+        ? imageBuffer
+        : Buffer.from(
+            imageBuffer.buffer,
+            imageBuffer.byteOffset ?? 0,
+            imageBuffer.byteLength,
+          );
       tempPath  = path.join(os.tmpdir(), `orbit_embed_${fileId}_${Date.now()}.jpg`);
       fs.writeFileSync(tempPath, buf);
       inputPath = tempPath;

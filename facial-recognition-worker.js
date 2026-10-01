@@ -253,19 +253,28 @@ function findPersonMatches(embedding) {
     // Hiding is a safety boundary: retain the existing group, but never grow
     // it from an automatic match that the user may not see to review.
     if (hiddenPersonIds.has(personId)) continue;
-    const scores = representatives
-      .map((representative) => ({ representative, score: cosineSimilarity(embedding, representative.embedding) }))
-      .sort((a, b) => b.score - a.score);
-    const best = scores[0]?.score ?? -1;
-    const second = scores[1]?.score ?? -1;
-    const representative = scores[0]?.representative;
+    let best = -1;
+    let second = -1;
+    let representative = null;
+    let representativeCount = 0;
+    for (const candidate of representatives) {
+      representativeCount += 1;
+      const score = cosineSimilarity(embedding, candidate.embedding);
+      if (!representative || score > best) {
+        second = best;
+        best = score;
+        representative = candidate;
+      } else if (score > second) {
+        second = score;
+      }
+    }
     if (!closestMatch || best > closestMatch.score) {
       closestMatch = { personId, faceId: representative?.faceId ?? null, score: best };
     }
     // A single exceptionally strong match can join a group. Otherwise demand
     // corroboration from a second representative to resist transitive merges.
     const accepted = best >= STRONG_MATCH_THRESHOLD ||
-      (scores.length >= 2 && best >= CONSISTENT_MATCH_THRESHOLD && second >= SECONDARY_MATCH_THRESHOLD);
+      (representativeCount >= 2 && best >= CONSISTENT_MATCH_THRESHOLD && second >= SECONDARY_MATCH_THRESHOLD);
     if (accepted && (!acceptedMatch || best > acceptedMatch.score)) {
       acceptedMatch = { personId, faceId: representative?.faceId ?? null, score: best };
     }

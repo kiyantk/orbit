@@ -247,7 +247,15 @@ app.whenReady().then(() => {
           activeWorkers--;
           activeWorkerMap.delete(filePath);
           if (prefetchQueue.length > 0) prefetchQueue.shift()();
-          if (msg.success) resolve(Buffer.from(msg.buffer));
+          if (msg.success) {
+            resolve(
+              Buffer.from(
+                msg.buffer,
+                msg.byteOffset ?? 0,
+                msg.byteLength ?? msg.buffer.byteLength,
+              ),
+            );
+          }
           else reject(new Error(msg.error));
         });
         worker.on("error", (err) => {
@@ -1409,9 +1417,12 @@ ipcMain.handle("fetch-file-overview", async (event, { filters = {}, settings = {
 
 ipcMain.handle(
   "fetch-map-data",
-  async (event, { filters = {}, settings = {} } = {}) => {
+  async (event, { filters = {}, settings = {}, viewType = "cluster" } = {}) => {
     try {
       initDatabase();
+      const activeViewType = ["cluster", "heatmap", "line", "countries"].includes(viewType)
+        ? viewType
+        : "cluster";
 
       const { sql, params } = buildWhereClause(filters, {
         allowUndated: true,
@@ -1429,10 +1440,17 @@ ipcMain.handle(
       
       const finalWhere = whereSQL ? `WHERE ${whereSQL}` : "";
 
+      const selectedFields = activeViewType === "cluster"
+        ? "latitude, longitude, altitude, country, create_date, filename, device_model, media_id, id, thumbnail_path"
+        : activeViewType === "line"
+          ? "latitude, longitude, altitude, country, create_date, id"
+          : activeViewType === "countries"
+            ? "latitude, longitude, country, id"
+            : "latitude, longitude";
       const rows = db
         .prepare(
           `
-      SELECT latitude, longitude, altitude, country, create_date, filename, device_model, media_id, id, thumbnail_path
+      SELECT ${selectedFields}
       FROM files
       ${finalWhere}
     `,
@@ -1454,14 +1472,50 @@ ipcMain.handle(
         .prepare(`SELECT COUNT(*) AS count FROM files WHERE ${totalWhereSQL}`)
         .get(...totalParams).count;
 
-      const points = [];
-      const heat = [];
-      const countryCounts = {};
-      const countryBounds = {};
-      let lineSegments = [];
+      const baseResult = { success: true, totalCount, filteredCount: rows.length };
+      if (activeViewType === "cluster") {
+        return {
+          ...baseResult,
+          points: rows.map((item) => ({
+            lat: item.latitude,
+            lng: item.longitude,
+            popup: {
+              filename: item.filename,
+              date: item.create_date,
+              device: item.device_model,
+              country: item.country,
+              altitude: item.altitude,
+              item_id: item.id,
+              id: item.media_id,
+              thumbnail_path: item.thumbnail_path,
+            },
+          })),
+        };
+      }
+
+      if (activeViewType === "heatmap") {
+        return {
+          ...baseResult,
+          coordinates: rows.map((item) => [item.latitude, item.longitude]),
+        };
+      }
+
+      if (activeViewType === "countries") {
+        const countryCounts = {};
+        const countryBounds = {};
+        for (const item of rows) {
+          const latlng = [item.latitude, item.longitude];
+          for (const country of normalizeCountries(item.country)) {
+            countryCounts[country] = (countryCounts[country] || 0) + 1;
+            (countryBounds[country] ||= []).push(latlng);
+          }
+        }
+        return { ...baseResult, countryCounts, countryBounds };
+      }
+
+      const lineSegments = [];
       let currentSegment = [];
       let lastPoint = null;
-
       const haversineDistance = (a, b) => {
         const R = 6371;
         const toRad = (x) => (x * Math.PI) / 180;
@@ -1469,59 +1523,22 @@ ipcMain.handle(
         const dLon = toRad(b[1] - a[1]);
         const lat1 = toRad(a[0]);
         const lat2 = toRad(b[0]);
-        const h =
-          Math.sin(dLat / 2) ** 2 +
+        const h = Math.sin(dLat / 2) ** 2 +
           Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
         return 2 * R * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
       };
-
       for (const item of rows) {
+        if (!item.country || item.altitude == null || item.altitude > 1500) continue;
         const latlng = [item.latitude, item.longitude];
-        points.push({
-          lat: item.latitude,
-          lng: item.longitude,
-          popup: {
-            filename: item.filename,
-            date: item.create_date,
-            device: item.device_model,
-            country: item.country,
-            altitude: item.altitude,
-            item_id: item.id,
-            id: item.media_id,
-            thumbnail_path: item.thumbnail_path,
-          },
-        });
-        heat.push([item.latitude, item.longitude, 1]);
-        if (item.country) {
-          for (const c of normalizeCountries(item.country)) {
-            countryCounts[c] = (countryCounts[c] || 0) + 1;
-            (countryBounds[c] ||= []).push(latlng);
-          }
-          if((item.altitude || item.altitude === 0) && item.altitude <= 1500) {
-            if (lastPoint) {
-              const dist = haversineDistance(lastPoint, latlng);
-              if (dist > 200) {
-                if (currentSegment.length > 1) lineSegments.push(currentSegment);
-                currentSegment = [];
-              }
-            }
-            currentSegment.push(latlng);
-            lastPoint = latlng;
-          }
+        if (lastPoint && haversineDistance(lastPoint, latlng) > 200) {
+          if (currentSegment.length > 1) lineSegments.push(currentSegment);
+          currentSegment = [];
         }
+        currentSegment.push(latlng);
+        lastPoint = latlng;
       }
-
       if (currentSegment.length > 1) lineSegments.push(currentSegment);
-
-      return {
-        success: true,
-        points,
-        heat,
-        lines: lineSegments,
-        countryCounts,
-        countryBounds,
-        totalCount,
-      };
+      return { ...baseResult, lines: lineSegments };
     } catch (err) {
       console.error("fetch-map-data error:", err);
       return { success: false, error: err.message };
@@ -3399,10 +3416,9 @@ ipcMain.handle("fetch-years", async () => {
   const rows = db
     .prepare(
       `
-    SELECT
-      ${datePart("%Y")} AS year,
-      COUNT(*) AS total,
-      GROUP_CONCAT(id) AS ids
+      SELECT
+        ${datePart("%Y")} AS year,
+        COUNT(*) AS total
     FROM files
     WHERE create_date_local IS NOT NULL OR create_date IS NOT NULL OR created IS NOT NULL OR modified IS NOT NULL
     GROUP BY year
@@ -3450,7 +3466,7 @@ ipcMain.handle("fetch-years", async () => {
   return rows.map((r) => ({
     year: r.year,
     total: r.total,
-    ids: r.ids.split(",").map(Number),
+    selection: { type: "memory-year", year: r.year },
     thumbnails: thumbsByYear[r.year] || [],
   }));
 });
@@ -3472,11 +3488,10 @@ ipcMain.handle("fetch-months", async () => {
   const rows = db
     .prepare(
       `
-    SELECT
-      ${datePart("%Y")} AS year,
-      ${datePart("%m")} AS month,
-      COUNT(*) AS total,
-      GROUP_CONCAT(id) AS ids
+      SELECT
+        ${datePart("%Y")} AS year,
+        ${datePart("%m")} AS month,
+        COUNT(*) AS total
     FROM files
     WHERE create_date_local IS NOT NULL OR create_date IS NOT NULL OR created IS NOT NULL OR modified IS NOT NULL
     GROUP BY year, month
@@ -3527,7 +3542,7 @@ ipcMain.handle("fetch-months", async () => {
     year: r.year,
     month: r.month,
     total: r.total,
-    ids: r.ids.split(",").map(Number),
+    selection: { type: "memory-month", year: r.year, month: r.month },
     thumbnails: thumbsByMonth[`${r.year}-${r.month}`] || [],
   }));
 });
@@ -3624,6 +3639,12 @@ ipcMain.handle("fetch-trips", async (_, options = {}) => {
         total: totalPhotos,
         ids: t.ids,
         countries: mainCountries,
+        selection: {
+          type: "memory-trip",
+          start: t.start,
+          end: t.end,
+          homeCountry: home,
+        },
       };
     })
     .filter(Boolean)
@@ -3688,7 +3709,7 @@ ipcMain.handle("fetch-trips", async (_, options = {}) => {
       thumbsByTrip[row.trip_id].push(row);
   }
 
-  return filtered.map((t) => ({
+  return filtered.map(({ ids, ...t }) => ({
     ...t,
     title: t.countries.join(" – ") + ` ${new Date(t.start).getFullYear()}`,
     thumbnails: thumbsByTrip[t.id] || [],
@@ -3724,8 +3745,7 @@ ipcMain.handle("fetch-on-this-day", async () => {
         `
       SELECT
         ${datePart("%Y")} AS year,
-        COUNT(*)          AS total,
-        GROUP_CONCAT(id)  AS ids
+        COUNT(*)          AS total
       FROM files
       WHERE
         ${datePart("%m")} = ?
@@ -3783,12 +3803,171 @@ ipcMain.handle("fetch-on-this-day", async () => {
     return rows.map((r) => ({
       year: parseInt(r.year, 10),
       total: r.total,
-      ids: r.ids.split(",").map(Number),
+      selection: {
+        type: "memory-on-this-day",
+        year: String(r.year),
+        month: todayMM,
+        day: todayDD,
+      },
       thumbnails: thumbsByYear[r.year] || [],
     }));
   } catch (err) {
     console.error("fetch-on-this-day error:", err);
     return [];
+  }
+});
+
+// Summary cards intentionally carry compact query descriptors rather than every
+// matching media ID. Resolve the full set only after the user opens a card.
+ipcMain.handle("resolve-summary-media-ids", async (_, { selections } = {}) => {
+  try {
+    initDatabase();
+    const requested = Array.isArray(selections) ? selections : [selections];
+    const ids = new Set();
+    const dateExpr = `
+      CASE
+        WHEN create_date_local IS NOT NULL THEN create_date_local
+        WHEN create_date IS NOT NULL THEN datetime(create_date, 'unixepoch', 'localtime')
+        ELSE datetime(MIN(created, modified), 'unixepoch', 'localtime')
+      END
+    `;
+    const addRows = (rows) => rows.forEach(({ id }) => ids.add(id));
+
+    for (const selection of requested) {
+      if (!selection || typeof selection !== "object") continue;
+
+      switch (selection.type) {
+        case "memory-year":
+          addRows(db.prepare(`SELECT id FROM files WHERE strftime('%Y', ${dateExpr}) = ?`)
+            .all(String(selection.year)));
+          break;
+        case "memory-month":
+          addRows(db.prepare(`
+            SELECT id FROM files
+            WHERE strftime('%Y', ${dateExpr}) = ?
+              AND strftime('%m', ${dateExpr}) = ?
+          `).all(String(selection.year), String(selection.month).padStart(2, "0")));
+          break;
+        case "memory-on-this-day":
+          addRows(db.prepare(`
+            SELECT id FROM files
+            WHERE strftime('%Y', ${dateExpr}) = ?
+              AND strftime('%m', ${dateExpr}) = ?
+              AND strftime('%d', ${dateExpr}) = ?
+          `).all(
+            String(selection.year),
+            String(selection.month).padStart(2, "0"),
+            String(selection.day).padStart(2, "0"),
+          ));
+          break;
+        case "memory-trip":
+          addRows(db.prepare(`
+            SELECT id FROM files
+            WHERE country IS NOT NULL
+              AND country != ?
+              AND ${dateExpr} BETWEEN ? AND ?
+          `).all(selection.homeCountry, selection.start, selection.end));
+          break;
+        case "custom-memory": {
+          const row = db.prepare("SELECT media_ids FROM memories WHERE id = ?").get(selection.memoryId);
+          let mediaIds = [];
+          try { mediaIds = JSON.parse(row?.media_ids || "[]"); } catch {}
+          mediaIds.forEach((id) => Number.isInteger(Number(id)) && ids.add(Number(id)));
+          break;
+        }
+        case "place":
+        case "place-visit": {
+          const excludeFlights = selection.excludeFlights
+            ? "AND (f.altitude IS NULL OR f.altitude <= 9000)"
+            : "";
+          let rows = [];
+          let getPlaces = null;
+          let matchesPlace = null;
+
+          if (selection.category === "country") {
+            rows = db.prepare(`
+              SELECT id, country, create_date
+              FROM files f
+              WHERE country IS NOT NULL AND country != ''
+                ${excludeFlights}
+            `).all();
+            getPlaces = (row) => normalizeCountries(row.country).map((country) => ({ key: country, country }));
+            matchesPlace = (place) => place.country === selection.country;
+          } else if (selection.category === "region") {
+            rows = db.prepare(`
+              SELECT f.id, f.create_date, l.country, l.subdivision
+              FROM locations l
+              JOIN files f ON f.id = l.file_id
+              WHERE l.subdivision IS NOT NULL AND l.subdivision != ''
+                ${excludeFlights}
+            `).all();
+            getPlaces = (row) => [{
+              key: `${row.country}|${row.subdivision}`,
+              country: row.country,
+              subdivision: row.subdivision,
+            }];
+            matchesPlace = (place) =>
+              place.country === selection.country && place.subdivision === selection.subdivision;
+          } else if (selection.category === "city") {
+            const cityExpression = locationDisplayNameExpression(selection.nameDisplay, "l");
+            rows = db.prepare(`
+              SELECT f.id, f.create_date, l.country, l.subdivision, ${cityExpression} AS city
+              FROM locations l
+              JOIN files f ON f.id = l.file_id
+              WHERE ${cityExpression} IS NOT NULL AND ${cityExpression} != ''
+                ${excludeFlights}
+            `).all();
+            getPlaces = (row) => [{
+              key: `${row.country}|${row.subdivision}|${row.city}`,
+              country: row.country,
+              subdivision: row.subdivision,
+              city: row.city,
+            }];
+            matchesPlace = (place) =>
+              place.country === selection.country &&
+              place.subdivision === selection.subdivision &&
+              place.city === selection.city;
+          }
+
+          if (!getPlaces || !matchesPlace) break;
+          if (selection.type === "place") {
+            addRows(rows.filter((row) => getPlaces(row).some(matchesPlace)));
+            break;
+          }
+
+          const segment = createPlaceVisitSegments(rows, getPlaces).find(
+            (place) => place.segmentIndex === selection.segmentIndex && matchesPlace(place),
+          );
+          if (segment) segment.ids.forEach((id) => ids.add(id));
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
+    return { success: true, ids: [...ids] };
+  } catch (err) {
+    console.error("resolve-summary-media-ids error:", err);
+    return { success: false, error: err.message, ids: [] };
+  }
+});
+
+ipcMain.handle("memory:get-details", async (_, { id } = {}) => {
+  try {
+    initDatabase();
+    const memory = db.prepare(`
+      SELECT id, title, description, color, media_ids
+      FROM memories WHERE id = ?
+    `).get(id);
+    if (!memory) return { success: false, error: "Memory not found" };
+    let mediaIds = [];
+    try { mediaIds = JSON.parse(memory.media_ids || "[]"); } catch {}
+    const { media_ids, ...details } = memory;
+    return { success: true, memory: { ...details, mediaIds } };
+  } catch (err) {
+    console.error("memory:get-details error:", err);
+    return { success: false, error: err.message };
   }
 });
 
@@ -3940,7 +4119,15 @@ ipcMain.handle("fetch-memories", async () => {
         console.error("Invalid media_ids JSON for memory:", m.id, err);
       }
 
-      if (!mediaIds.length) return { ...m, thumbnails: [], total: 0 };
+      if (!mediaIds.length) {
+        const { media_ids, ...memory } = m;
+        return {
+          ...memory,
+          thumbnails: [],
+          total: 0,
+          selection: { type: "custom-memory", memoryId: m.id },
+        };
+      }
 
       // Chunk into batches of 999 to stay under SQLite's variable limit
       const chunkSize = 999;
@@ -3990,7 +4177,13 @@ ipcMain.handle("fetch-memories", async () => {
       // Shuffle and limit to 20 in JS since we're merging chunks
       const shuffled = thumbnails.sort(() => Math.random() - 0.5).slice(0, 20);
 
-      return { ...m, thumbnails: shuffled, total: mediaIds.length };
+      const { media_ids, ...memory } = m;
+      return {
+        ...memory,
+        thumbnails: shuffled,
+        total: mediaIds.length,
+        selection: { type: "custom-memory", memoryId: m.id },
+      };
     });
 
     return results;
@@ -5931,6 +6124,7 @@ function createPlaceVisitSegments(rows, getPlaces) {
         ? previous
         : {
             ...place,
+            segmentIndex: segments.length,
             count: 0,
             ids: [],
             startVisit: timestamp,
@@ -6042,10 +6236,23 @@ ipcMain.handle("location:get-countries", async (event, currentSettings = {}) => 
         return {
           country: entry.country,
           count: entry.count,
-          ids: entry.ids,
           startVisit: entry.startVisit,
           lastVisit: entry.lastVisit,
           thumbnails: thumbnail ? [thumbnail] : [],
+          selection: placesChronological
+            ? {
+                type: "place-visit",
+                category: "country",
+                country: entry.country,
+                segmentIndex: entry.segmentIndex,
+                excludeFlights: placesExcludeFlights,
+              }
+            : {
+                type: "place",
+                category: "country",
+                country: entry.country,
+                excludeFlights: placesExcludeFlights,
+              },
         };
       });
 
@@ -6169,10 +6376,25 @@ ipcMain.handle("location:get-regions", async (event, currentSettings = {}) => {
           country: entry.country,
           subdivision: entry.subdivision,
           count: entry.count,
-          ids: entry.ids,
           startVisit: entry.startVisit,
           lastVisit: entry.lastVisit,
           thumbnails: thumbnail ? [thumbnail] : [],
+          selection: placesChronological
+            ? {
+                type: "place-visit",
+                category: "region",
+                country: entry.country,
+                subdivision: entry.subdivision,
+                segmentIndex: entry.segmentIndex,
+                excludeFlights: placesExcludeFlights,
+              }
+            : {
+                type: "place",
+                category: "region",
+                country: entry.country,
+                subdivision: entry.subdivision,
+                excludeFlights: placesExcludeFlights,
+              },
         };
       });
 
@@ -6298,10 +6520,29 @@ ipcMain.handle("location:get-cities", async (event, currentSettings = {}) => {
           subdivision: entry.subdivision,
           city: entry.city,
           count: entry.count,
-          ids: entry.ids,
           startVisit: entry.startVisit,
           lastVisit: entry.lastVisit,
           thumbnails: thumbnail ? [thumbnail] : [],
+          selection: placesChronological
+            ? {
+                type: "place-visit",
+                category: "city",
+                country: entry.country,
+                subdivision: entry.subdivision,
+                city: entry.city,
+                nameDisplay: placesNameDisplay,
+                segmentIndex: entry.segmentIndex,
+                excludeFlights: placesExcludeFlights,
+              }
+            : {
+                type: "place",
+                category: "city",
+                country: entry.country,
+                subdivision: entry.subdivision,
+                city: entry.city,
+                nameDisplay: placesNameDisplay,
+                excludeFlights: placesExcludeFlights,
+              },
         };
       });
 

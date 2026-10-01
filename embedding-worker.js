@@ -172,7 +172,11 @@ function spawnChild() {
     return;
   }
 
-  child = fork(scriptPath, [], { stdio: ["pipe", "pipe", "pipe", "ipc"] });
+  child = fork(scriptPath, [], {
+    stdio: ["pipe", "pipe", "pipe", "ipc"],
+    // Preserve Buffers as binary data instead of JSON/Base64 strings.
+    serialization: "advanced",
+  });
 
   child.stdout?.on("data", d => log("info",  `[embed-child] ${d.toString().trim()}`));
   child.stderr?.on("data", d => log("error", `[embed-child] ${d.toString().trim()}`));
@@ -344,7 +348,7 @@ async function loop() {
         type:        "embed",
         fileId:      file.id,
         filePath:    file.path,
-        imageBuffer: imageBuffer.toString("base64"),
+        imageBuffer,
       });
     });
   } else {
