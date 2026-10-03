@@ -12,7 +12,7 @@ async function loadIso3166Data() {
   try {
     const raw = await window.electron.ipcRenderer.invoke(
       "read-file",
-      "public/iso3166-2.json",
+      "iso3166-2.json",
     );
     iso3166Data = JSON.parse(raw);
   } catch (err) {

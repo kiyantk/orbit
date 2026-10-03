@@ -8,6 +8,13 @@ const {
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
+
+// Electron's app root stays at app.asar (or the repository root in dev), even
+// when the entry point is loaded from a build subdirectory.
+const applicationRoot = app.getAppPath();
+const requireAppModule = (relativePath) =>
+  require(path.join(applicationRoot, relativePath));
+
 const Database = require("better-sqlite3");
 const { exiftool } = require("exiftool-vendored");
 const sharp = require("sharp");
@@ -18,21 +25,21 @@ const lookup = require("coordinate_to_country");
 const fsPromises = fs.promises;
 const heicDecode = require("heic-decode");
 const { Worker } = require("worker_threads");
-const EmbeddingService = require("./embedding-service");
-const LocationService  = require("./location-service");
-const OcrService = require("./ocr-service");
-const FacialRecognitionService = require("./facial-recognition-service");
-const { ResourceManager } = require("./resource-manager");
+const EmbeddingService = requireAppModule("embedding-service");
+const LocationService  = requireAppModule("location-service");
+const OcrService = requireAppModule("ocr-service");
+const FacialRecognitionService = requireAppModule("facial-recognition-service");
+const { ResourceManager } = requireAppModule("resource-manager");
 const {
   LOCATION_METADATA_TABLE,
   getLocationGeocoderVersion,
   normalizeLocationSelectionMode,
-} = require("./location-schema");
+} = requireAppModule("location-schema");
 const {
   OCR_FTS_TABLE,
   OCR_INDEX_TABLE,
   OCR_METADATA_TABLE,
-} = require("./ocr-schema");
+} = requireAppModule("ocr-schema");
 const {
   FACE_PIPELINE_VERSION,
   FACE_METADATA_TABLE,
@@ -48,7 +55,7 @@ const {
   IGNORED_FACE_TABLE,
   HIDDEN_MANUAL_PERSON_TABLE,
   MANUAL_PERSON_ITEM_TABLE,
-} = require("./facial-recognition-schema");
+} = requireAppModule("facial-recognition-schema");
 const crypto = require("crypto");
 const { parse } = require("csv-parse/sync");
 const AdmZip = require("adm-zip");
@@ -59,7 +66,39 @@ let ocrService = null;
 let facialRecognitionService = null;
 let resourceManager = null;
 
-if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
+/**
+ * Return a file that is bundled with the application in both development and
+ * a packaged build. CRA copies public/ into build/, while the source public/
+ * folder is also present in the app archive, so check both locations.
+ */
+function getBundledFilePath(relativePath) {
+  const normalizedPath = String(relativePath).replace(/^[\\/]+/, "");
+  const candidates = [
+    path.join(applicationRoot, "build", normalizedPath),
+    path.join(applicationRoot, "public", normalizedPath),
+    path.join(applicationRoot, normalizedPath),
+  ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
+}
+
+function getFfmpegExecutablePath() {
+  if (!ffmpegPath || !app.isPackaged) return ffmpegPath;
+
+  // An executable cannot run from inside app.asar. electron-builder places
+  // files matched by asarUnpack next to the archive under app.asar.unpacked.
+  const unpackedPath = path.join(
+    process.resourcesPath,
+    "app.asar.unpacked",
+    "node_modules",
+    "ffmpeg-static",
+    path.basename(ffmpegPath),
+  );
+  return fs.existsSync(unpackedPath) ? unpackedPath : ffmpegPath;
+}
+
+const resolvedFfmpegPath = getFfmpegExecutablePath();
+if (resolvedFfmpegPath) ffmpeg.setFfmpegPath(resolvedFfmpegPath);
 
 let mainWindow;
 let splash;
@@ -81,7 +120,7 @@ function locationDisplayNameExpression(nameDisplay, tableAlias = "") {
     : "COALESCE(" + englishName + ", " + localName + ", " + legacyCity + ")";
 }
 
-const countriesCsvPath = path.join(__dirname, 'public/countries.csv');
+const countriesCsvPath = getBundledFilePath("countries.csv");
 const countriesCsv = fs.readFileSync(countriesCsvPath, "utf-8");
 
 const countryPopulationMap = {};
@@ -123,19 +162,19 @@ app.whenReady().then(() => {
   splash = new BrowserWindow({
     width: 400,
     height: 400,
-    icon: path.join(__dirname, "./public/logo512.png"),
+    icon: getBundledFilePath("logo512.png"),
     transparent: true,
     frame: false,
     alwaysOnTop: true,
     focusable: false,
   });
-  splash.loadFile(path.join(__dirname, "public/splash.html"));
+  splash.loadFile(getBundledFilePath("splash.html"));
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 788,
     minHeight: 708,
-    icon: path.join(__dirname, "./public/logo512.png"),
+    icon: getBundledFilePath("logo512.png"),
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -217,7 +256,9 @@ app.whenReady().then(() => {
   const serverPort = 54055;
 
   appServer.use((req, res, next) => {
-    res.setHeader("Access-Control-Allow-Origin", "http://localhost:3000");
+    // The packaged renderer is loaded from file:// rather than the CRA dev
+    // server. This loopback-only server must accept both origins.
+    res.setHeader("Access-Control-Allow-Origin", "*");
     next();
   });
 
@@ -435,10 +476,11 @@ app.whenReady().then(() => {
   server.once("listening", () => {
     console.log(`Local file server running on http://localhost:${serverPort}`);
   
-    // Dev:
-    mainWindow.loadURL("http://localhost:3000");
-    // Prod:
-    // mainWindow.loadFile(path.join(__dirname, 'index.html'));
+    if (app.isPackaged) {
+      mainWindow.loadFile(getBundledFilePath("index.html"));
+    } else {
+      mainWindow.loadURL("http://localhost:3000");
+    }
   });
   
   server.once("error", async (err) => {
@@ -865,9 +907,20 @@ function startFacialRecognitionService() {
 }
 
 ipcMain.handle("read-file", async (_event, relativePath) => {
-  // Resolve relative to the app's resources / public directory.
-  // Adjust __dirname / app.getAppPath() to match your project layout.
-  const fullPath = path.join(__dirname, relativePath);
+  const normalizedPath = String(relativePath).replace(/\\/g, "/");
+  if (
+    path.isAbsolute(normalizedPath) ||
+    normalizedPath.split("/").includes("..")
+  ) {
+    throw new Error("Only bundled application files may be read");
+  }
+
+  // Keep this IPC API scoped to public static data, never arbitrary files.
+  const publicPath = normalizedPath.replace(/^public\//, "");
+  const fullPath = getBundledFilePath(publicPath);
+  if (!fs.existsSync(fullPath)) {
+    throw new Error(`Bundled file not found: ${publicPath}`);
+  }
   return fs.readFileSync(fullPath, "utf-8");
 });
 
@@ -1573,7 +1626,7 @@ ipcMain.handle(
 );
 
 // Load the mapped JSON once on startup
-const countriesPath = path.join(__dirname, "countries_mapped.json");
+const countriesPath = getBundledFilePath("countries_mapped.json");
 const countriesMap = JSON.parse(fs.readFileSync(countriesPath, "utf8"));
 
 ipcMain.handle("get-country-name", async (event, isoCode) => {

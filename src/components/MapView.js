@@ -7,7 +7,11 @@ import "leaflet.markercluster";
 import "leaflet.heat";
 import * as topojson from "topojson-client";
 
-const TOPO_URL = "/countries.final.topo.json";
+// Do not use a root-relative URL here. In a packaged app the renderer uses a
+// file:// URL, where `/countries...` resolves to the drive root (for example
+// file:///C:/countries.final.topo.json). CRA sets PUBLIC_URL to `.` for this
+// project's production build, which keeps this URL relative to index.html.
+const TOPO_URL = `${process.env.PUBLIC_URL}/countries.final.topo.json`;
 
 function getThemeColor(token, fallback) {
   if (typeof document === "undefined") return fallback;
